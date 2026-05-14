@@ -126,6 +126,12 @@ export async function addEmployeeToConversation(
   return newEmp;
 }
 
+export async function clearEmployeesFromConversation(
+  convId: string
+): Promise<void> {
+  await updateConversation(convId, { employees: [] });
+}
+
 export async function updateConversationTitle(
   convId: string,
   firstMessage: string

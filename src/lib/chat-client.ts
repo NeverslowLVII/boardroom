@@ -18,7 +18,8 @@ export async function sendChatMessage(
   manager: ManagerConfig,
   connections: ApiConnection[],
   callbacks: StreamCallbacks,
-  overrides?: Record<string, string>
+  overrides?: Record<string, string>,
+  fastMode?: boolean
 ): Promise<void> {
   const payload: Record<string, unknown> = {
     messages,
@@ -26,6 +27,10 @@ export async function sendChatMessage(
     manager,
     connections,
   };
+
+  if (fastMode) {
+    payload.fastMode = true;
+  }
 
   const activeOverrides = overrides
     ? Object.fromEntries(Object.entries(overrides).filter(([, v]) => v.trim()))

@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, ChevronDown, ChevronUp } from "lucide-react";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -21,6 +21,91 @@ function CopyButton({ text }: { text: string }) {
       {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
       {copied ? "Copié" : "Copier"}
     </button>
+  );
+}
+
+const CODE_COLLAPSE_PX = 300;
+
+function CollapsibleCode({ lang, children }: { lang: string; children: React.ReactNode }) {
+  const codeText = String(children).replace(/\n$/, "");
+  const ref = useRef<HTMLPreElement>(null);
+  const [isLong, setIsLong] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (ref.current && ref.current.scrollHeight > CODE_COLLAPSE_PX) {
+      setIsLong(true);
+    }
+  }, []);
+
+  return (
+    <div className="mb-3 overflow-hidden rounded-lg ring-1 ring-zinc-800 last:mb-0">
+      <div className="flex items-center justify-between bg-zinc-800/60 px-4 py-2">
+        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+          {lang || "code"}
+        </span>
+        <div className="flex items-center gap-1">
+          {isLong && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-zinc-500 transition-colors hover:bg-zinc-700 hover:text-zinc-300"
+            >
+              {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              {expanded ? "Réduire" : "Expand"}
+            </button>
+          )}
+          <CopyButton text={codeText} />
+        </div>
+      </div>
+      <pre
+        ref={ref}
+        className="overflow-x-auto bg-zinc-900/80 p-4 text-[13px] leading-relaxed text-zinc-300 transition-[max-height] duration-300"
+        style={{ maxHeight: isLong && !expanded ? `${CODE_COLLAPSE_PX}px` : "none", overflow: isLong && !expanded ? "hidden" : "auto" }}
+      >
+        <code>{children}</code>
+      </pre>
+      {isLong && !expanded && (
+        <div className="pointer-events-none relative -mt-8 h-8 bg-gradient-to-t from-[#131316] to-transparent" />
+      )}
+    </div>
+  );
+}
+
+const TABLE_COLLAPSE_PX = 320;
+
+function CollapsibleTable({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [isLong, setIsLong] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (ref.current && ref.current.scrollHeight > TABLE_COLLAPSE_PX) {
+      setIsLong(true);
+    }
+  }, []);
+
+  return (
+    <div className="mb-3 last:mb-0">
+      <div
+        ref={ref}
+        className="overflow-hidden rounded-lg ring-1 ring-zinc-800 transition-[max-height] duration-300"
+        style={{ maxHeight: isLong && !expanded ? `${TABLE_COLLAPSE_PX}px` : "none" }}
+      >
+        <table className="w-full border-collapse text-sm">{children}</table>
+      </div>
+      {isLong && !expanded && (
+        <div className="pointer-events-none relative -mt-8 h-8 bg-gradient-to-t from-zinc-950 to-transparent" />
+      )}
+      {isLong && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="mt-1 flex items-center gap-1 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-300"
+        >
+          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          {expanded ? "Réduire le tableau" : `Voir le tableau complet`}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -50,20 +135,7 @@ const components: Components = {
     const match = className?.match(/language-(\w+)/);
     const lang = match?.[1];
     if (lang || className?.includes("language-")) {
-      const codeText = String(children).replace(/\n$/, "");
-      return (
-        <div className="mb-3 overflow-hidden rounded-lg ring-1 ring-zinc-800 last:mb-0">
-          <div className="flex items-center justify-between bg-zinc-800/60 px-4 py-2">
-            <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-              {lang || "code"}
-            </span>
-            <CopyButton text={codeText} />
-          </div>
-          <pre className="overflow-x-auto bg-zinc-900/80 p-4 text-[13px] leading-relaxed text-zinc-300">
-            <code>{children}</code>
-          </pre>
-        </div>
-      );
+      return <CollapsibleCode lang={lang || "code"}>{children}</CollapsibleCode>;
     }
     return (
       <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-[13px] text-zinc-200">
@@ -72,11 +144,7 @@ const components: Components = {
     );
   },
   pre: ({ children }) => <>{children}</>,
-  table: ({ children }) => (
-    <div className="mb-3 overflow-hidden rounded-lg ring-1 ring-zinc-800 last:mb-0">
-      <table className="w-full border-collapse text-sm">{children}</table>
-    </div>
-  ),
+  table: ({ children }) => <CollapsibleTable>{children}</CollapsibleTable>,
   thead: ({ children }) => (
     <thead className="bg-zinc-800/50">{children}</thead>
   ),

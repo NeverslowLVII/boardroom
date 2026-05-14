@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { Sparkles } from "lucide-react";
+import { Sparkles, RefreshCw } from "lucide-react";
 import type { ChatMessage, EmployeeMemo, EmployeeConfig, ProposedEmployee } from "@/types";
 import {
   getConversation,
   updateConversation,
   addEmployeeToConversation,
   updateConversationTitle,
+  clearEmployeesFromConversation,
 } from "@/lib/conversation-store";
 import {
   getConnections,
@@ -91,7 +92,7 @@ export function ChatWindow({
   }, [conversationId]);
 
   const executeChat = useCallback(
-    async (content: string, currentMessages: ChatMessage[], currentOverrides?: Record<string, string>) => {
+    async (content: string, currentMessages: ChatMessage[], currentOverrides?: Record<string, string>, fastMode?: boolean) => {
       const conv = await getConversation(conversationId);
       if (!conv) return;
 
@@ -112,7 +113,7 @@ export function ChatWindow({
           memos = m;
           setReceivedMemos(m);
           setLoadingPhase("manager");
-          setStatusText("Le Manager rédige sa synthèse...");
+          setStatusText(fastMode ? "Le Manager répond..." : "Le Manager rédige sa synthèse...");
         },
         onContent: (chunk) => {
           fullContent += chunk;
@@ -128,7 +129,7 @@ export function ChatWindow({
             role: "assistant",
             content: fullContent,
             timestamp: Date.now(),
-            employeeMemos: memos,
+            employeeMemos: memos.length > 0 ? memos : undefined,
           };
 
           setMessages((prev) => {
@@ -143,7 +144,7 @@ export function ChatWindow({
           setStatusText("");
           setLoadingPhase(null);
         },
-      }, currentOverrides);
+      }, currentOverrides, fastMode);
     },
     [conversationId, persistMessages]
   );
@@ -188,6 +189,8 @@ export function ChatWindow({
 
   const handleSend = useCallback(
     async (content: string) => {
+      const isFastMode = content.trim().startsWith("/fast ");
+
       const userMsg: ChatMessage = {
         id: uuidv4(),
         role: "user",
@@ -207,6 +210,30 @@ export function ChatWindow({
       setIsLoading(true);
       setStreamingContent("");
       setReceivedMemos([]);
+
+      if (isFastMode) {
+        setLoadingPhase("manager");
+        setStatusText("Le Manager répond en direct...");
+
+        try {
+          await executeChat(content, updatedMessages, undefined, true);
+        } catch (err) {
+          const errorMsg: ChatMessage = {
+            id: uuidv4(),
+            role: "assistant",
+            content: `Erreur : ${err instanceof Error ? err.message : "Erreur inconnue"}`,
+            timestamp: Date.now(),
+          };
+          const withError = [...updatedMessages, errorMsg];
+          setMessages(withError);
+          persistMessages(withError);
+          setIsLoading(false);
+          setStreamingContent("");
+          setStatusText("");
+          setLoadingPhase(null);
+        }
+        return;
+      }
 
       const conv = await getConversation(conversationId);
       const emps = (conv?.employees ?? []).filter((e) => e.isActive);
@@ -321,8 +348,95 @@ export function ChatWindow({
     setProposalPrompt("");
   };
 
+  const handleRescopeTeam = useCallback(async () => {
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+    const subject = window.prompt(
+      "Sur quel sujet porte la nouvelle équipe ?",
+      lastUserMsg?.content?.slice(0, 100) ?? ""
+    );
+    if (!subject?.trim()) return;
+
+    await clearEmployeesFromConversation(conversationId);
+    setActiveEmployees([]);
+
+    setIsLoading(true);
+    setStreamingContent("");
+    setReceivedMemos([]);
+    setLoadingPhase("employees");
+
+    const errorOrNull = await requestTeamProposal(subject.trim());
+    if (errorOrNull) {
+      const errorMsg: ChatMessage = {
+        id: uuidv4(),
+        role: "assistant",
+        content: errorOrNull,
+        timestamp: Date.now(),
+      };
+      setMessages((prev) => {
+        const updated = [...prev, errorMsg];
+        persistMessages(updated);
+        return updated;
+      });
+      setIsLoading(false);
+      setStatusText("");
+      setLoadingPhase(null);
+    }
+  }, [messages, conversationId, persistMessages, requestTeamProposal]);
+
+  const handleRetry = useCallback(async () => {
+    if (messages.length < 2 || isLoading) return;
+
+    const lastAssistantIdx = messages.length - 1;
+    if (messages[lastAssistantIdx].role !== "assistant") return;
+
+    const withoutLast = messages.slice(0, lastAssistantIdx);
+    setMessages(withoutLast);
+    await persistMessages(withoutLast);
+
+    const lastUserMsg = [...withoutLast].reverse().find((m) => m.role === "user");
+    if (!lastUserMsg) return;
+
+    setIsLoading(true);
+    setStreamingContent("");
+    setReceivedMemos([]);
+    setLoadingPhase("employees");
+    setStatusText("L'équipe analyse la demande...");
+
+    try {
+      await executeChat(lastUserMsg.content, withoutLast);
+    } catch (err) {
+      const errorMsg: ChatMessage = {
+        id: uuidv4(),
+        role: "assistant",
+        content: `Erreur : ${err instanceof Error ? err.message : "Erreur inconnue"}`,
+        timestamp: Date.now(),
+      };
+      const withError = [...withoutLast, errorMsg];
+      setMessages(withError);
+      persistMessages(withError);
+      setIsLoading(false);
+      setStreamingContent("");
+      setStatusText("");
+      setLoadingPhase(null);
+    }
+  }, [messages, isLoading, persistMessages, executeChat]);
+
   return (
     <div className="flex h-full flex-col bg-zinc-950">
+      {/* Top bar with re-scope button */}
+      {activeEmployees.length > 0 && !isLoading && !pendingProposal && (
+        <div className="flex items-center justify-end border-b border-zinc-800/40 px-4 py-2">
+          <button
+            onClick={handleRescopeTeam}
+            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-zinc-500 transition-all hover:bg-zinc-800 hover:text-zinc-300"
+            title="Reformer l'équipe"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Reformer l&apos;équipe
+          </button>
+        </div>
+      )}
+
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-8">
         <div className="mx-auto max-w-5xl space-y-6">
           {/* Hydration loader */}
@@ -366,16 +480,19 @@ export function ChatWindow({
 
           {/* Messages */}
           {messages.map((msg, idx) => {
+            const isLast = idx === messages.length - 1;
             const isLastAssistant =
               msg.role === "assistant" &&
               msg.employeeMemos &&
               msg.employeeMemos.length > 0 &&
-              idx === messages.length - 1;
+              isLast;
 
             return (
               <ChatBubble
                 key={msg.id}
                 message={msg}
+                isLast={isLast}
+                onRetry={isLast && msg.role === "assistant" && !isLoading ? handleRetry : undefined}
                 overrides={isLastAssistant ? overrides : undefined}
                 onOverrideChange={
                   isLastAssistant
@@ -436,7 +553,7 @@ export function ChatWindow({
       <ChatInput
         onSend={handleSend}
         disabled={!isHydrated || isLoading || !!pendingProposal}
-        activeEmployees={activeEmployees}
+        activeEmployees={isLoading ? [] : activeEmployees}
       />
     </div>
   );

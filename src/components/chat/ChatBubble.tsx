@@ -1,5 +1,7 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
+import { ChevronDown, ChevronUp, Copy, Check, RotateCcw } from "lucide-react";
 import type { ChatMessage } from "@/types";
 import { EmployeeMemoPanel } from "./EmployeeMemoPanel";
 import { MarkdownContent } from "./MarkdownContent";
@@ -8,7 +10,11 @@ interface ChatBubbleProps {
   message: ChatMessage;
   overrides?: Record<string, string>;
   onOverrideChange?: (employeeId: string, instruction: string) => void;
+  onRetry?: () => void;
+  isLast?: boolean;
 }
+
+const COLLAPSE_THRESHOLD_PX = 400;
 
 function timeAgo(ts: number): string {
   const diff = Date.now() - ts;
@@ -20,11 +26,67 @@ function timeAgo(ts: number): string {
   return new Date(ts).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
 }
 
-export function ChatBubble({ message, overrides, onOverrideChange }: ChatBubbleProps) {
+function CopyMessageButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+      title="Copier"
+    >
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? "Copié" : "Copier"}
+    </button>
+  );
+}
+
+function CollapsibleContent({ children, defaultCollapsed = false }: { children: React.ReactNode; defaultCollapsed?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [isLong, setIsLong] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+
+  useEffect(() => {
+    if (ref.current && ref.current.scrollHeight > COLLAPSE_THRESHOLD_PX) {
+      setIsLong(true);
+      if (defaultCollapsed) setExpanded(false);
+    }
+  }, [defaultCollapsed]);
+
+  return (
+    <div>
+      <div
+        ref={ref}
+        className="overflow-hidden transition-[max-height] duration-300"
+        style={{ maxHeight: !isLong || expanded ? "none" : `${COLLAPSE_THRESHOLD_PX}px` }}
+      >
+        {children}
+      </div>
+      {isLong && !expanded && (
+        <div className="pointer-events-none relative -mt-12 h-12 bg-gradient-to-t from-zinc-950 to-transparent" />
+      )}
+      {isLong && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="mt-1 flex items-center gap-1 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-300"
+        >
+          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          {expanded ? "Voir moins" : "Voir plus"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function ChatBubble({ message, overrides, onOverrideChange, onRetry, isLast }: ChatBubbleProps) {
   const isUser = message.role === "user";
 
   return (
-    <div className="animate-message">
+    <div className="group/bubble animate-message">
       <div className="flex gap-3">
         {/* Avatar */}
         <div className="mt-0.5 shrink-0">
@@ -54,13 +116,32 @@ export function ChatBubble({ message, overrides, onOverrideChange }: ChatBubbleP
           {/* Message body */}
           {isUser ? (
             <div className="rounded-xl bg-zinc-900 px-4 py-3 text-sm leading-relaxed text-zinc-300">
-              <div className="whitespace-pre-wrap">{message.content}</div>
+              <CollapsibleContent defaultCollapsed>
+                <div className="whitespace-pre-wrap">{message.content}</div>
+              </CollapsibleContent>
             </div>
           ) : (
-            <div className="text-sm leading-relaxed text-zinc-300">
-              <MarkdownContent content={message.content} />
-            </div>
+            <CollapsibleContent>
+              <div className="text-sm leading-relaxed text-zinc-300">
+                <MarkdownContent content={message.content} />
+              </div>
+            </CollapsibleContent>
           )}
+
+          {/* Action bar: copy + retry */}
+          <div className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover/bubble:opacity-100">
+            <CopyMessageButton text={message.content} />
+            {!isUser && isLast && onRetry && (
+              <button
+                onClick={onRetry}
+                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+                title="Relancer"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Relancer
+              </button>
+            )}
+          </div>
 
           {/* Employee memos */}
           {!isUser && message.employeeMemos && message.employeeMemos.length > 0 && (

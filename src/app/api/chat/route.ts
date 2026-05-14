@@ -13,6 +13,7 @@ interface ChatPayload {
   manager: ManagerConfig;
   connections: ApiConnection[];
   overrides?: Record<string, string>;
+  fastMode?: boolean;
 }
 
 function resolveConnection(
@@ -132,7 +133,7 @@ Fais ta synthèse et présente ta réponse au CEO.`;
 export async function POST(request: NextRequest) {
   try {
     const body: ChatPayload = await request.json();
-    const { messages, employees, manager, connections, overrides } = body;
+    const { messages, employees, manager, connections, overrides, fastMode } = body;
 
     const managerConn = resolveConnection(manager.connectionId, connections);
     if (!managerConn) {
@@ -149,29 +150,35 @@ export async function POST(request: NextRequest) {
       content: m.content,
     }));
 
-    // Phase 1: parallel employee queries (with optional per-employee overrides)
-    const employeeResults = await Promise.all(
-      activeEmployees.map((emp) => {
-        let history = conversationHistory;
+    let employeeResults: EmployeeResult[] = [];
+    let managerPrompt: string;
 
-        const override = overrides?.[emp.id];
-        if (override?.trim()) {
-          history = [...history];
-          const lastIdx = history.length - 1;
-          if (lastIdx >= 0 && history[lastIdx].role === "user") {
-            history[lastIdx] = {
-              ...history[lastIdx],
-              content: `${history[lastIdx].content}\n\n[Instruction spécifique pour vous : ${override.trim()}]`,
-            };
+    if (fastMode) {
+      managerPrompt = userMessage;
+    } else {
+      // Phase 1: parallel employee queries (with optional per-employee overrides)
+      employeeResults = await Promise.all(
+        activeEmployees.map((emp) => {
+          let history = conversationHistory;
+
+          const override = overrides?.[emp.id];
+          if (override?.trim()) {
+            history = [...history];
+            const lastIdx = history.length - 1;
+            if (lastIdx >= 0 && history[lastIdx].role === "user") {
+              history[lastIdx] = {
+                ...history[lastIdx],
+                content: `${history[lastIdx].content}\n\n[Instruction spécifique pour vous : ${override.trim()}]`,
+              };
+            }
           }
-        }
 
-        return queryEmployee(emp, connections, history);
-      })
-    );
+          return queryEmployee(emp, connections, history);
+        })
+      );
 
-    // Phase 2: sequential manager synthesis with streaming
-    const synthesisPrompt = buildSynthesisPrompt(userMessage, employeeResults, activeEmployees);
+      managerPrompt = buildSynthesisPrompt(userMessage, employeeResults, activeEmployees);
+    }
 
     const managerClient = new OpenAI({
       baseURL: managerConn.baseUrl,
@@ -187,7 +194,7 @@ export async function POST(request: NextRequest) {
           role: m.role as "user" | "assistant",
           content: m.content,
         })),
-        { role: "user", content: synthesisPrompt },
+        { role: "user", content: managerPrompt },
       ],
     });
 

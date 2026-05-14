@@ -1,15 +1,53 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronDown, ChevronRight, AlertCircle, MessageSquarePlus, Clock } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { ChevronDown, ChevronRight, ChevronUp, AlertCircle, MessageSquarePlus, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EmployeeMemo } from "@/types";
 import { MarkdownContent } from "./MarkdownContent";
+
+const MEMO_COLLAPSE_PX = 200;
 
 interface EmployeeMemoPanelProps {
   memos: EmployeeMemo[];
   overrides?: Record<string, string>;
   onOverrideChange?: (employeeId: string, instruction: string) => void;
+}
+
+function CollapsibleMemoBody({ content }: { content: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [isLong, setIsLong] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (ref.current && ref.current.scrollHeight > MEMO_COLLAPSE_PX) {
+      setIsLong(true);
+    }
+  }, []);
+
+  return (
+    <div>
+      <div
+        ref={ref}
+        className="overflow-hidden transition-[max-height] duration-300"
+        style={{ maxHeight: isLong && !expanded ? `${MEMO_COLLAPSE_PX}px` : "none" }}
+      >
+        <MarkdownContent content={content} />
+      </div>
+      {isLong && !expanded && (
+        <div className="pointer-events-none relative -mt-8 h-8 bg-gradient-to-t from-[#111113] to-transparent" />
+      )}
+      {isLong && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
+          className="mt-1 flex items-center gap-1 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-300"
+        >
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {expanded ? "Réduire" : "Voir plus"}
+        </button>
+      )}
+    </div>
+  );
 }
 
 export function EmployeeMemoPanel({ memos, overrides = {}, onOverrideChange }: EmployeeMemoPanelProps) {
@@ -91,7 +129,7 @@ export function EmployeeMemoPanel({ memos, overrides = {}, onOverrideChange }: E
                       <span>{memo.error}</span>
                     </div>
                   ) : (
-                    <MarkdownContent content={memo.content ?? ""} />
+                    <CollapsibleMemoBody content={memo.content ?? ""} />
                   )}
                 </div>
 

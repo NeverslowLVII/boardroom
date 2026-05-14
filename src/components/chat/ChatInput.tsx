@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { ArrowUp } from "lucide-react";
+import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
 import type { EmployeeConfig } from "@/types";
 
 interface ChatInputProps {
@@ -12,6 +12,7 @@ interface ChatInputProps {
 
 export function ChatInput({ onSend, disabled, activeEmployees = [] }: ChatInputProps) {
   const [value, setValue] = useState("");
+  const [teamExpanded, setTeamExpanded] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -36,25 +37,34 @@ export function ChatInput({ onSend, disabled, activeEmployees = [] }: ChatInputP
   };
 
   const hasText = value.trim().length > 0;
+  const showTeamBadge = activeEmployees.length > 0;
 
   return (
     <div className="px-4 pb-5 pt-2">
       <div className="mx-auto max-w-5xl">
-        {/* Active team badge */}
-        {activeEmployees.length > 0 && (
-          <div className="mb-2 flex items-center gap-1.5 px-1">
-            <span className="text-[11px] text-zinc-600">Équipe :</span>
-            <div className="flex flex-wrap gap-1">
-              {activeEmployees.map((emp) => (
-                <span
-                  key={emp.id}
-                  className="flex items-center gap-1 rounded-full bg-zinc-800/80 px-2 py-0.5 text-[11px] text-zinc-400 ring-1 ring-zinc-700/40"
-                >
-                  <span className="text-xs">{emp.icon}</span>
-                  <span>{emp.name}</span>
-                </span>
-              ))}
-            </div>
+        {/* Collapsible team badge */}
+        {showTeamBadge && (
+          <div className="mb-2 px-1">
+            <button
+              onClick={() => setTeamExpanded(!teamExpanded)}
+              className="flex items-center gap-1.5 text-[11px] text-zinc-600 transition-colors hover:text-zinc-400"
+            >
+              {teamExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              <span>Équipe ({activeEmployees.length})</span>
+            </button>
+            {teamExpanded && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {activeEmployees.map((emp) => (
+                  <span
+                    key={emp.id}
+                    className="flex items-center gap-1 rounded-full bg-zinc-800/80 px-2 py-0.5 text-[11px] text-zinc-400 ring-1 ring-zinc-700/40"
+                  >
+                    <span className="text-xs">{emp.icon}</span>
+                    <span>{emp.name}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
