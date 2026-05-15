@@ -60,11 +60,23 @@ export function ChatWindow({
   const [rescopeSubject, setRescopeSubject] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const streamingContentRef = useRef("");
 
   const isConfigured = useMemo(
     () => getConnections().length > 0 && !!getManager().modelId,
     [configVersion, isHydrated]
   );
+
+  const displayEmployees = useMemo(() => {
+    const validConnectionIds = new Set(getConnections().map((c) => c.id));
+    return activeEmployees.filter(
+      (e) => e.isActive && validConnectionIds.has(e.connectionId)
+    );
+  }, [activeEmployees, configVersion]);
+
+  useEffect(() => {
+    streamingContentRef.current = streamingContent;
+  }, [streamingContent]);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,10 +148,8 @@ export function ChatWindow({
   const handleStop = useCallback(() => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
-    setStreamingContent((current) => {
-      finalizeInterrupted(current);
-      return "";
-    });
+    finalizeInterrupted(streamingContentRef.current);
+    setStreamingContent("");
   }, [finalizeInterrupted]);
 
   const executeChat = useCallback(
@@ -287,7 +297,7 @@ export function ChatWindow({
           const errorMsg: ChatMessage = {
             id: uuidv4(),
             role: "assistant",
-            content: `Erreur : ${formatApiError(err)}`,
+            content: formatApiError(err),
             timestamp: Date.now(),
           };
           const withError = [...updatedMessages, errorMsg];
@@ -337,7 +347,7 @@ export function ChatWindow({
         const errorMsg: ChatMessage = {
           id: uuidv4(),
           role: "assistant",
-          content: `Erreur : ${formatApiError(err)}`,
+          content: formatApiError(err),
           timestamp: Date.now(),
         };
         const withError = [...updatedMessages, errorMsg];
@@ -399,7 +409,7 @@ export function ChatWindow({
         const errorMsg: ChatMessage = {
           id: uuidv4(),
           role: "assistant",
-          content: `Erreur : ${formatApiError(err)}`,
+          content: formatApiError(err),
           timestamp: Date.now(),
         };
         const withError = [...updatedMessages, errorMsg];
@@ -493,7 +503,7 @@ export function ChatWindow({
       const errorMsg: ChatMessage = {
         id: uuidv4(),
         role: "assistant",
-        content: `Erreur : ${formatApiError(err)}`,
+        content: formatApiError(err),
         timestamp: Date.now(),
       };
       const withError = [...withoutLast, errorMsg];
@@ -696,7 +706,7 @@ export function ChatWindow({
             ? "Veuillez configurer l'application d'abord"
             : "Posez votre question au Boardroom..."
         }
-        activeEmployees={isLoading ? [] : activeEmployees}
+        activeEmployees={isLoading ? [] : displayEmployees}
       />
     </div>
   );
