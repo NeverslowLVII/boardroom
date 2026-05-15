@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { ChevronDown, ChevronUp, Copy, Check, RotateCcw } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Check, RotateCcw, Download } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types";
 import { EmployeeMemoPanel } from "./EmployeeMemoPanel";
 import { MarkdownContent } from "./MarkdownContent";
@@ -24,6 +25,32 @@ function timeAgo(ts: number): string {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `il y a ${hours}h`;
   return new Date(ts).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+}
+
+function formatTokenCount(n: number): string {
+  return n.toLocaleString("fr-FR");
+}
+
+function DownloadMessageButton({ content, timestamp }: { content: string; timestamp: number }) {
+  const handleDownload = () => {
+    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `boardroom-decision-${timestamp}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <button
+      onClick={handleDownload}
+      className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+      title="Télécharger la décision"
+    >
+      <Download className="h-3.5 w-3.5" />
+      Exporter
+    </button>
+  );
 }
 
 function CopyMessageButton({ text }: { text: string }) {
@@ -86,8 +113,8 @@ export function ChatBubble({ message, overrides, onOverrideChange, onRetry, isLa
   const isUser = message.role === "user";
 
   return (
-    <div className="group/bubble animate-message">
-      <div className="flex gap-3">
+    <div className={cn("group/bubble animate-message", isUser && "flex justify-end")}>
+      <div className={cn("flex max-w-[85%] gap-3", isUser && "flex-row-reverse")}>
         {/* Avatar */}
         <div className="mt-0.5 shrink-0">
           {isUser ? (
@@ -102,9 +129,9 @@ export function ChatBubble({ message, overrides, onOverrideChange, onRetry, isLa
         </div>
 
         {/* Content */}
-        <div className="min-w-0 flex-1">
+        <div className={cn("min-w-0 flex-1", isUser && "flex flex-col items-end")}>
           {/* Label + timestamp */}
-          <div className="mb-1 flex items-center gap-2">
+          <div className={cn("mb-1 flex items-center gap-2", isUser && "flex-row-reverse")}>
             <span className="text-sm font-semibold text-zinc-200">
               {isUser ? "CEO" : "Manager"}
             </span>
@@ -115,22 +142,37 @@ export function ChatBubble({ message, overrides, onOverrideChange, onRetry, isLa
 
           {/* Message body */}
           {isUser ? (
-            <div className="rounded-xl bg-zinc-900 px-4 py-3 text-sm leading-relaxed text-zinc-300">
+            <div className="rounded-xl bg-zinc-800 px-4 py-3 text-right text-sm leading-relaxed text-zinc-100">
               <CollapsibleContent defaultCollapsed>
-                <div className="whitespace-pre-wrap">{message.content}</div>
+                <div className="whitespace-pre-wrap text-right">{message.content}</div>
               </CollapsibleContent>
             </div>
           ) : (
-            <CollapsibleContent>
-              <div className="text-sm leading-relaxed text-zinc-300">
-                <MarkdownContent content={message.content} />
-              </div>
-            </CollapsibleContent>
+            <div className="relative w-full">
+              <CollapsibleContent>
+                <div className="text-sm leading-relaxed text-zinc-300">
+                  <MarkdownContent content={message.content} />
+                </div>
+              </CollapsibleContent>
+              {message.tokenUsage && (
+                <span className="mt-1 block text-right text-[10px] text-zinc-600">
+                  ⚡ {formatTokenCount(message.tokenUsage.totalTokens)} tokens
+                </span>
+              )}
+            </div>
           )}
 
-          {/* Action bar: copy + retry */}
-          <div className="mt-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover/bubble:opacity-100">
+          {/* Action bar: copy + export + retry */}
+          <div
+            className={cn(
+              "mt-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover/bubble:opacity-100",
+              isUser && "justify-end"
+            )}
+          >
             <CopyMessageButton text={message.content} />
+            {!isUser && (
+              <DownloadMessageButton content={message.content} timestamp={message.timestamp} />
+            )}
             {!isUser && isLast && onRetry && (
               <button
                 onClick={onRetry}
@@ -145,7 +187,7 @@ export function ChatBubble({ message, overrides, onOverrideChange, onRetry, isLa
 
           {/* Employee memos */}
           {!isUser && message.employeeMemos && message.employeeMemos.length > 0 && (
-            <div className="mt-3">
+            <div className="mt-3 w-full">
               <EmployeeMemoPanel
                 memos={message.employeeMemos}
                 overrides={overrides}

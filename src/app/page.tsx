@@ -18,6 +18,7 @@ import { ConversationSidebar } from "@/components/sidebar/ConversationSidebar";
 
 export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [configVersion, setConfigVersion] = useState(0);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -83,6 +84,8 @@ export default function Home() {
               key={activeId}
               conversationId={activeId}
               onConversationUpdate={refreshConversations}
+              onOpenSettings={() => setSettingsOpen(true)}
+              configVersion={configVersion}
             />
           ) : (
             <div className="flex h-full items-center justify-center">
@@ -110,7 +113,10 @@ export default function Home() {
 
       <SettingsModal
         isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        onClose={() => {
+          setSettingsOpen(false);
+          setConfigVersion((v) => v + 1);
+        }}
       />
     </div>
   );

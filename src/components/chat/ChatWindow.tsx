@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { Sparkles, RefreshCw } from "lucide-react";
-import type { ChatMessage, EmployeeMemo, EmployeeConfig, ProposedEmployee } from "@/types";
+import { Sparkles, RefreshCw, Settings, AlertTriangle } from "lucide-react";
+import { formatApiError } from "@/lib/utils";
+import type { ChatMessage, EmployeeMemo, EmployeeConfig, ProposedEmployee, TokenUsage } from "@/types";
 import {
   getConversation,
   updateConversation,
@@ -32,11 +33,17 @@ const SUGGESTIONS = [
 interface ChatWindowProps {
   conversationId: string;
   onConversationUpdate: () => void;
+  onOpenSettings: () => void;
+  configVersion?: number;
 }
+
+const INTERRUPTED_MSG = "[Génération interrompue par l'utilisateur]";
 
 export function ChatWindow({
   conversationId,
   onConversationUpdate,
+  onOpenSettings,
+  configVersion = 0,
 }: ChatWindowProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activeEmployees, setActiveEmployees] = useState<EmployeeConfig[]>([]);
@@ -49,7 +56,15 @@ export function ChatWindow({
   const [pendingProposal, setPendingProposal] = useState<ProposedEmployee[] | null>(null);
   const [proposalPrompt, setProposalPrompt] = useState("");
   const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [isRescoping, setIsRescoping] = useState(false);
+  const [rescopeSubject, setRescopeSubject] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const isConfigured = useMemo(
+    () => getConnections().length > 0 && !!getManager().modelId,
+    [configVersion, isHydrated]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -91,8 +106,50 @@ export function ChatWindow({
     setActiveEmployees((conv?.employees ?? []).filter((e) => e.isActive));
   }, [conversationId]);
 
+  const finalizeInterrupted = useCallback(
+    (partialContent: string) => {
+      const content = partialContent.trim()
+        ? `${partialContent}\n\n${INTERRUPTED_MSG}`
+        : INTERRUPTED_MSG;
+
+      setMessages((prev) => {
+        const assistantMsg: ChatMessage = {
+          id: uuidv4(),
+          role: "assistant",
+          content,
+          timestamp: Date.now(),
+        };
+        const updated = [...prev, assistantMsg];
+        persistMessages(updated);
+        return updated;
+      });
+
+      setStreamingContent("");
+      setReceivedMemos([]);
+      setIsLoading(false);
+      setStatusText("");
+      setLoadingPhase(null);
+    },
+    [persistMessages]
+  );
+
+  const handleStop = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setStreamingContent((current) => {
+      finalizeInterrupted(current);
+      return "";
+    });
+  }, [finalizeInterrupted]);
+
   const executeChat = useCallback(
-    async (content: string, currentMessages: ChatMessage[], currentOverrides?: Record<string, string>, fastMode?: boolean) => {
+    async (
+      content: string,
+      currentMessages: ChatMessage[],
+      currentOverrides?: Record<string, string>,
+      fastMode?: boolean,
+      signal?: AbortSignal
+    ) => {
       const conv = await getConversation(conversationId);
       if (!conv) return;
 
@@ -102,6 +159,7 @@ export function ChatWindow({
 
       let fullContent = "";
       let memos: EmployeeMemo[] = [];
+      let tokenUsage: TokenUsage | undefined;
 
       const historyForApi = currentMessages.map((m) => ({
         role: m.role,
@@ -120,16 +178,18 @@ export function ChatWindow({
           setStreamingContent(fullContent);
         },
         onError: (error) => {
-          fullContent += `\n\n[Erreur de streaming : ${error}]`;
+          fullContent += `\n\n[Erreur de streaming : ${formatApiError(error)}]`;
           setStreamingContent(fullContent);
         },
-        onDone: () => {
+        onDone: (usage) => {
+          tokenUsage = usage;
           const assistantMsg: ChatMessage = {
             id: uuidv4(),
             role: "assistant",
             content: fullContent,
             timestamp: Date.now(),
             employeeMemos: memos.length > 0 ? memos : undefined,
+            tokenUsage,
           };
 
           setMessages((prev) => {
@@ -144,7 +204,7 @@ export function ChatWindow({
           setStatusText("");
           setLoadingPhase(null);
         },
-      }, currentOverrides, fastMode);
+      }, currentOverrides, fastMode, signal);
     },
     [conversationId, persistMessages]
   );
@@ -189,7 +249,12 @@ export function ChatWindow({
 
   const handleSend = useCallback(
     async (content: string) => {
+      if (!isConfigured) return;
+
       const isFastMode = content.trim().startsWith("/fast ");
+
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
 
       const userMsg: ChatMessage = {
         id: uuidv4(),
@@ -216,12 +281,13 @@ export function ChatWindow({
         setStatusText("Le Manager répond en direct...");
 
         try {
-          await executeChat(content, updatedMessages, undefined, true);
+          await executeChat(content, updatedMessages, undefined, true, signal);
         } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") return;
           const errorMsg: ChatMessage = {
             id: uuidv4(),
             role: "assistant",
-            content: `Erreur : ${err instanceof Error ? err.message : "Erreur inconnue"}`,
+            content: `Erreur : ${formatApiError(err)}`,
             timestamp: Date.now(),
           };
           const withError = [...updatedMessages, errorMsg];
@@ -265,12 +331,13 @@ export function ChatWindow({
       setOverrides({});
 
       try {
-        await executeChat(content, updatedMessages, currentOverrides);
+        await executeChat(content, updatedMessages, currentOverrides, false, signal);
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         const errorMsg: ChatMessage = {
           id: uuidv4(),
           role: "assistant",
-          content: `Erreur : ${err instanceof Error ? err.message : "Erreur inconnue"}`,
+          content: `Erreur : ${formatApiError(err)}`,
           timestamp: Date.now(),
         };
         const withError = [...updatedMessages, errorMsg];
@@ -282,7 +349,7 @@ export function ChatWindow({
         setLoadingPhase(null);
       }
     },
-    [messages, conversationId, overrides, persistMessages, executeChat, requestTeamProposal, onConversationUpdate]
+    [messages, conversationId, overrides, persistMessages, executeChat, requestTeamProposal, onConversationUpdate, isConfigured]
   );
 
   const handleTeamValidate = useCallback(
@@ -317,18 +384,22 @@ export function ChatWindow({
       setMessages(updatedMessages);
       persistMessages(updatedMessages);
 
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
+
       setIsLoading(true);
       setStreamingContent("");
       setLoadingPhase("employees");
       setStatusText("L'équipe analyse la demande...");
 
       try {
-        await executeChat(proposalPrompt, updatedMessages);
+        await executeChat(proposalPrompt, updatedMessages, undefined, false, signal);
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         const errorMsg: ChatMessage = {
           id: uuidv4(),
           role: "assistant",
-          content: `Erreur : ${err instanceof Error ? err.message : "Erreur inconnue"}`,
+          content: `Erreur : ${formatApiError(err)}`,
           timestamp: Date.now(),
         };
         const withError = [...updatedMessages, errorMsg];
@@ -348,13 +419,23 @@ export function ChatWindow({
     setProposalPrompt("");
   };
 
-  const handleRescopeTeam = useCallback(async () => {
+  const handleRescopeTeam = useCallback(() => {
     const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    const subject = window.prompt(
-      "Sur quel sujet porte la nouvelle équipe ?",
-      lastUserMsg?.content?.slice(0, 100) ?? ""
-    );
-    if (!subject?.trim()) return;
+    setRescopeSubject(lastUserMsg?.content?.slice(0, 100) ?? "");
+    setIsRescoping(true);
+  }, [messages]);
+
+  const handleRescopeCancel = useCallback(() => {
+    setIsRescoping(false);
+    setRescopeSubject("");
+  }, []);
+
+  const handleRescopeSubmit = useCallback(async () => {
+    const subject = rescopeSubject.trim();
+    if (!subject) return;
+
+    setIsRescoping(false);
+    setRescopeSubject("");
 
     await clearEmployeesFromConversation(conversationId);
     setActiveEmployees([]);
@@ -364,7 +445,7 @@ export function ChatWindow({
     setReceivedMemos([]);
     setLoadingPhase("employees");
 
-    const errorOrNull = await requestTeamProposal(subject.trim());
+    const errorOrNull = await requestTeamProposal(subject);
     if (errorOrNull) {
       const errorMsg: ChatMessage = {
         id: uuidv4(),
@@ -381,7 +462,7 @@ export function ChatWindow({
       setStatusText("");
       setLoadingPhase(null);
     }
-  }, [messages, conversationId, persistMessages, requestTeamProposal]);
+  }, [rescopeSubject, conversationId, persistMessages, requestTeamProposal]);
 
   const handleRetry = useCallback(async () => {
     if (messages.length < 2 || isLoading) return;
@@ -402,13 +483,17 @@ export function ChatWindow({
     setLoadingPhase("employees");
     setStatusText("L'équipe analyse la demande...");
 
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
     try {
-      await executeChat(lastUserMsg.content, withoutLast);
+      await executeChat(lastUserMsg.content, withoutLast, undefined, false, signal);
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
       const errorMsg: ChatMessage = {
         id: uuidv4(),
         role: "assistant",
-        content: `Erreur : ${err instanceof Error ? err.message : "Erreur inconnue"}`,
+        content: `Erreur : ${formatApiError(err)}`,
         timestamp: Date.now(),
       };
       const withError = [...withoutLast, errorMsg];
@@ -460,21 +545,42 @@ export function ChatWindow({
                 </p>
               </div>
 
-              <div className="mt-8 grid grid-cols-2 gap-3 w-full max-w-lg">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s.label}
-                    onClick={() => handleSend(s.prompt)}
-                    className="group flex items-start gap-3 rounded-xl border border-zinc-800/80 bg-zinc-900/50 px-4 py-3.5 text-left transition-all hover:border-zinc-700 hover:bg-zinc-800/60"
-                  >
-                    <span className="mt-0.5 text-base">{s.icon}</span>
+              {isConfigured ? (
+                <div className="mt-8 grid w-full max-w-lg grid-cols-2 gap-3">
+                  {SUGGESTIONS.map((s) => (
+                    <button
+                      key={s.label}
+                      onClick={() => handleSend(s.prompt)}
+                      className="group flex items-start gap-3 rounded-xl border border-zinc-800/80 bg-zinc-900/50 px-4 py-3.5 text-left transition-all hover:border-zinc-700 hover:bg-zinc-800/60"
+                    >
+                      <span className="mt-0.5 text-base">{s.icon}</span>
+                      <div>
+                        <p className="text-sm font-medium text-zinc-300 group-hover:text-zinc-100">{s.label}</p>
+                        <p className="mt-0.5 line-clamp-2 text-xs text-zinc-600">{s.prompt}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-8 w-full max-w-md space-y-4">
+                  <div className="flex items-start gap-3 rounded-xl border border-amber-900/50 bg-amber-950/30 px-4 py-3.5 text-left">
+                    <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" />
                     <div>
-                      <p className="text-sm font-medium text-zinc-300 group-hover:text-zinc-100">{s.label}</p>
-                      <p className="mt-0.5 text-xs text-zinc-600 line-clamp-2">{s.prompt}</p>
+                      <p className="text-sm font-medium text-amber-200">Configuration requise</p>
+                      <p className="mt-1 text-xs text-amber-200/70">
+                        Ajoutez une connexion API et sélectionnez un modèle pour le Manager avant de commencer.
+                      </p>
                     </div>
+                  </div>
+                  <button
+                    onClick={onOpenSettings}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-100 px-6 py-3 text-sm font-semibold text-zinc-900 transition-all hover:bg-white"
+                  >
+                    <Settings className="h-4 w-4" />
+                    Configurer le Boardroom
                   </button>
-                ))}
-              </div>
+                </div>
+              )}
             </div>
           ) : null}
 
@@ -531,9 +637,12 @@ export function ChatWindow({
                   </div>
 
                   {streamingContent ? (
-                    <div className="text-sm leading-relaxed text-zinc-300">
-                      <MarkdownContent content={streamingContent} />
-                      <span className="inline-block text-zinc-500 animate-pulse">▌</span>
+                    <div className="space-y-2">
+                      <div className="text-sm leading-relaxed text-zinc-300">
+                        <MarkdownContent content={streamingContent} />
+                        <span className="inline-block text-zinc-500 animate-pulse">▌</span>
+                      </div>
+                      <StopButton onStop={handleStop} />
                     </div>
                   ) : (
                     <StatusBar
@@ -541,6 +650,7 @@ export function ChatWindow({
                       statusText={statusText}
                       activeEmployees={activeEmployees}
                       receivedMemos={receivedMemos}
+                      onStop={handleStop}
                     />
                   )}
                 </div>
@@ -550,9 +660,42 @@ export function ChatWindow({
         </div>
       </div>
 
+      {isRescoping && (
+        <div className="border-t border-zinc-800/40 bg-zinc-900/50 px-4 py-3">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={rescopeSubject}
+              onChange={(e) => setRescopeSubject(e.target.value)}
+              placeholder="Nouveau sujet de la conversation ?"
+              className="min-w-[200px] flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-zinc-600"
+              onKeyDown={(e) => e.key === "Enter" && handleRescopeSubmit()}
+            />
+            <button
+              onClick={handleRescopeSubmit}
+              disabled={!rescopeSubject.trim()}
+              className="rounded-lg bg-zinc-100 px-4 py-2 text-xs font-semibold text-zinc-900 transition-colors hover:bg-white disabled:opacity-40"
+            >
+              Valider
+            </button>
+            <button
+              onClick={handleRescopeCancel}
+              className="rounded-lg px-4 py-2 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+            >
+              Annuler
+            </button>
+          </div>
+        </div>
+      )}
+
       <ChatInput
         onSend={handleSend}
-        disabled={!isHydrated || isLoading || !!pendingProposal}
+        disabled={!isHydrated || !isConfigured || isLoading || !!pendingProposal || isRescoping}
+        placeholder={
+          !isConfigured
+            ? "Veuillez configurer l'application d'abord"
+            : "Posez votre question au Boardroom..."
+        }
         activeEmployees={isLoading ? [] : activeEmployees}
       />
     </div>
@@ -572,16 +715,29 @@ function LoadingDots({ label }: { label: string }) {
   );
 }
 
+function StopButton({ onStop }: { onStop: () => void }) {
+  return (
+    <button
+      onClick={onStop}
+      className="rounded-md px-2.5 py-1 text-xs font-medium text-red-400/90 transition-colors hover:bg-red-950/40 hover:text-red-300"
+    >
+      🛑 Arrêter
+    </button>
+  );
+}
+
 function StatusBar({
   phase,
   statusText,
   activeEmployees,
   receivedMemos,
+  onStop,
 }: {
   phase: "employees" | "manager" | null;
   statusText: string;
   activeEmployees: EmployeeConfig[];
   receivedMemos: EmployeeMemo[];
+  onStop?: () => void;
 }) {
   const memoDoneIds = new Set(receivedMemos.map((m) => m.employeeId));
 
@@ -627,13 +783,18 @@ function StatusBar({
         </div>
       )}
 
-      {/* Status text */}
-      {statusText && (
-        <div className="flex items-center gap-2 text-sm text-zinc-500">
-          <Sparkles className="h-3.5 w-3.5 animate-pulse" />
-          <span>{statusText}</span>
-        </div>
-      )}
+      {/* Status text + stop */}
+      <div className="flex items-center justify-between gap-3">
+        {statusText ? (
+          <div className="flex items-center gap-2 text-sm text-zinc-500">
+            <Sparkles className="h-3.5 w-3.5 animate-pulse" />
+            <span>{statusText}</span>
+          </div>
+        ) : (
+          <div />
+        )}
+        {onStop && <StopButton onStop={onStop} />}
+      </div>
     </div>
   );
 }

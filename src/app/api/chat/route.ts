@@ -1,10 +1,12 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
+import { formatApiError } from "@/lib/utils";
 import type {
   ApiConnection,
   EmployeeConfig,
   ManagerConfig,
   EmployeeResult,
+  TokenUsage,
 } from "@/types";
 
 interface ChatPayload {
@@ -25,6 +27,29 @@ function resolveConnection(
 
 function stripThinkingTags(text: string): string {
   return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+}
+
+function extractUsage(usage: {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+} | undefined): TokenUsage | undefined {
+  if (!usage) return undefined;
+  return {
+    promptTokens: usage.prompt_tokens ?? 0,
+    completionTokens: usage.completion_tokens ?? 0,
+    totalTokens: usage.total_tokens ?? 0,
+  };
+}
+
+function sumTokenUsage(usages: (TokenUsage | undefined)[]): TokenUsage | undefined {
+  const valid = usages.filter((u): u is TokenUsage => u != null);
+  if (valid.length === 0) return undefined;
+  return {
+    promptTokens: valid.reduce((s, u) => s + u.promptTokens, 0),
+    completionTokens: valid.reduce((s, u) => s + u.completionTokens, 0),
+    totalTokens: valid.reduce((s, u) => s + u.totalTokens, 0),
+  };
 }
 
 async function queryEmployee(
@@ -75,6 +100,7 @@ async function queryEmployee(
     });
 
     const raw = response.choices[0]?.message?.content ?? "";
+    const tokenUsage = extractUsage(response.usage);
 
     return {
       employeeId: employee.id,
@@ -83,6 +109,7 @@ async function queryEmployee(
       content: stripThinkingTags(raw),
       error: null,
       durationMs: Date.now() - start,
+      tokenUsage,
     };
   } catch (err) {
     return {
@@ -90,7 +117,7 @@ async function queryEmployee(
       employeeName: employee.name,
       employeeIcon: employee.icon,
       content: null,
-      error: err instanceof Error ? err.message : "Unknown error",
+      error: formatApiError(err),
       durationMs: Date.now() - start,
     };
   }
@@ -127,7 +154,9 @@ Voici les mémos de tes employés :
 
 ${memos}
 
-Fais ta synthèse et présente ta réponse au CEO.`;
+Fais ta synthèse et présente ta réponse au CEO.
+
+INSTRUCTION DYNAMIQUE : Analyse immédiatement le niveau d'accord entre les experts. S'ils sont unanimes sur la solution, IGNORE le format avec 'Désaccords' et 'Compromis'. Rédige à la place une réponse ultra-courte commençant par 'L'ÉQUIPE EST UNANIME' suivie du plan d'action direct.`;
 }
 
 export async function POST(request: NextRequest) {
@@ -185,9 +214,14 @@ export async function POST(request: NextRequest) {
       apiKey: managerConn.apiKey,
     });
 
+    const employeeTokenUsage = sumTokenUsage(
+      employeeResults.map((r) => r.tokenUsage)
+    );
+
     const stream = await managerClient.chat.completions.create({
       model: manager.modelId,
       stream: true,
+      stream_options: { include_usage: true },
       messages: [
         { role: "system", content: manager.systemPrompt },
         ...conversationHistory.slice(0, -1).map((m) => ({
@@ -208,11 +242,17 @@ export async function POST(request: NextRequest) {
           )
         );
 
+        let managerTokenUsage: TokenUsage | undefined;
+
         try {
           let insideThink = false;
           let buffer = "";
 
           for await (const chunk of stream) {
+            if (chunk.usage) {
+              managerTokenUsage = extractUsage(chunk.usage);
+            }
+
             const delta = chunk.choices[0]?.delta;
             if (delta && "reasoning_content" in delta) continue;
 
@@ -258,13 +298,23 @@ export async function POST(request: NextRequest) {
         } catch (err) {
           controller.enqueue(
             encoder.encode(
-              `data: ${JSON.stringify({ type: "error", error: err instanceof Error ? err.message : "Streaming error" })}\n\n`
+              `data: ${JSON.stringify({ type: "error", error: formatApiError(err) })}\n\n`
             )
           );
         }
 
+        const totalTokenUsage = sumTokenUsage([
+          employeeTokenUsage,
+          managerTokenUsage,
+        ]);
+
         controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ type: "done" })}\n\n`)
+          encoder.encode(
+            `data: ${JSON.stringify({
+              type: "done",
+              tokenUsage: totalTokenUsage,
+            })}\n\n`
+          )
         );
         controller.close();
       },
@@ -278,12 +328,6 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (err) {
-    return Response.json(
-      {
-        error:
-          err instanceof Error ? err.message : "Internal server error",
-      },
-      { status: 500 }
-    );
+    return Response.json({ error: formatApiError(err) }, { status: 500 });
   }
 }

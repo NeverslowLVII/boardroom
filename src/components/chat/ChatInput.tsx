@@ -8,9 +8,15 @@ interface ChatInputProps {
   onSend: (message: string) => void;
   disabled: boolean;
   activeEmployees?: EmployeeConfig[];
+  placeholder?: string;
 }
 
-export function ChatInput({ onSend, disabled, activeEmployees = [] }: ChatInputProps) {
+export function ChatInput({
+  onSend,
+  disabled,
+  activeEmployees = [],
+  placeholder = "Posez votre question au Boardroom...",
+}: ChatInputProps) {
   const [value, setValue] = useState("");
   const [teamExpanded, setTeamExpanded] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -75,7 +81,7 @@ export function ChatInput({ onSend, disabled, activeEmployees = [] }: ChatInputP
               value={value}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Posez votre question au Boardroom..."
+              placeholder={placeholder}
               disabled={disabled}
               rows={1}
               className="flex-1 resize-none bg-transparent text-sm leading-relaxed text-zinc-200

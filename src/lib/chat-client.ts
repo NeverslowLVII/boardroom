@@ -3,13 +3,14 @@ import type {
   EmployeeConfig,
   ManagerConfig,
   EmployeeMemo,
+  TokenUsage,
 } from "@/types";
 
 interface StreamCallbacks {
   onMemos: (memos: EmployeeMemo[]) => void;
   onContent: (content: string) => void;
   onError: (error: string) => void;
-  onDone: () => void;
+  onDone: (tokenUsage?: TokenUsage) => void;
 }
 
 export async function sendChatMessage(
@@ -19,7 +20,8 @@ export async function sendChatMessage(
   connections: ApiConnection[],
   callbacks: StreamCallbacks,
   overrides?: Record<string, string>,
-  fastMode?: boolean
+  fastMode?: boolean,
+  signal?: AbortSignal
 ): Promise<void> {
   const payload: Record<string, unknown> = {
     messages,
@@ -43,6 +45,7 @@ export async function sendChatMessage(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
 
   if (!response.ok) {
@@ -56,37 +59,45 @@ export async function sendChatMessage(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n\n");
-    buffer = lines.pop() ?? "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n\n");
+      buffer = lines.pop() ?? "";
 
-    for (const line of lines) {
-      const trimmed = line.replace(/^data: /, "").trim();
-      if (!trimmed) continue;
+      for (const line of lines) {
+        const trimmed = line.replace(/^data: /, "").trim();
+        if (!trimmed) continue;
 
-      try {
-        const event = JSON.parse(trimmed);
-        switch (event.type) {
-          case "memos":
-            callbacks.onMemos(event.memos);
-            break;
-          case "content":
-            callbacks.onContent(event.content);
-            break;
-          case "error":
-            callbacks.onError(event.error);
-            break;
-          case "done":
-            callbacks.onDone();
-            break;
+        try {
+          const event = JSON.parse(trimmed);
+          switch (event.type) {
+            case "memos":
+              callbacks.onMemos(event.memos);
+              break;
+            case "content":
+              callbacks.onContent(event.content);
+              break;
+            case "error":
+              callbacks.onError(event.error);
+              break;
+            case "done":
+              callbacks.onDone(event.tokenUsage);
+              break;
+          }
+        } catch {
+          // skip malformed events
         }
-      } catch {
-        // skip malformed events
       }
     }
+  } catch (err) {
+    if (signal?.aborted) {
+      const abortErr = new DOMException("Aborted", "AbortError");
+      throw abortErr;
+    }
+    throw err;
   }
 }

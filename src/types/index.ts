@@ -58,12 +58,19 @@ export interface Conversation {
 
 // --- Chat ---
 
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: number;
   employeeMemos?: EmployeeMemo[];
+  tokenUsage?: TokenUsage;
 }
 
 export interface EmployeeMemo {
@@ -82,4 +89,5 @@ export interface EmployeeResult {
   content: string | null;
   error: string | null;
   durationMs: number;
+  tokenUsage?: TokenUsage;
 }

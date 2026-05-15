@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
+import { formatApiError } from "@/lib/utils";
 import type {
   ApiConnection,
   ManagerConfig,
@@ -115,9 +116,7 @@ export async function POST(request: NextRequest) {
     return Response.json({ team: proposed });
   } catch (err) {
     return Response.json(
-      {
-        error: err instanceof Error ? err.message : "Erreur serveur.",
-      },
+      { error: formatApiError(err) },
       { status: 500 }
     );
   }
