@@ -61,7 +61,7 @@ export function ConversationSidebar({
               B
             </div>
             <div>
-              <span className="text-sm font-semibold text-zinc-100 tracking-tight">
+              <span className="font-display text-sm font-semibold text-zinc-100 tracking-tight">
                 Boardroom
               </span>
               <span className="ml-1.5 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-widest text-zinc-400">
@@ -85,7 +85,7 @@ export function ConversationSidebar({
         {conversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
             <MessageSquare className="h-6 w-6 text-zinc-700" />
-            <p className="mt-3 text-sm text-zinc-600">
+            <p className="mt-3 text-sm text-zinc-400">
               Aucune conversation
             </p>
           </div>
@@ -93,7 +93,7 @@ export function ConversationSidebar({
           <div className="space-y-4">
             {groups.map((group) => (
               <div key={group.label}>
-                <p className="mb-1 px-3 text-[11px] font-medium uppercase tracking-wider text-zinc-600">
+                <p className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
                   {group.label}
                 </p>
                 <div className="space-y-0.5">
@@ -105,7 +105,7 @@ export function ConversationSidebar({
                         "group flex items-center gap-2.5 rounded-lg px-3 py-2.5 cursor-pointer transition-all",
                         conv.id === activeId
                           ? "bg-zinc-800/80 text-zinc-100"
-                          : "text-zinc-500 hover:bg-zinc-800/40 hover:text-zinc-300"
+                          : "text-zinc-300 hover:bg-zinc-800/40 hover:text-zinc-100"
                       )}
                     >
                       <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-50" />
@@ -113,7 +113,7 @@ export function ConversationSidebar({
                         {conv.title}
                       </span>
                       {conv.employees.length > 0 && (
-                        <span className="shrink-0 rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] tabular-nums text-zinc-500 ring-1 ring-zinc-700/40">
+                        <span className="shrink-0 rounded bg-zinc-800/80 px-1.5 py-0.5 text-[10px] tabular-nums text-zinc-400 ring-1 ring-zinc-700/40">
                           {conv.employees.filter(e => e.isActive).length}
                         </span>
                       )}
@@ -139,7 +139,7 @@ export function ConversationSidebar({
       <div className="border-t border-zinc-800/50 px-2 py-2">
         <button
           onClick={onOpenSettings}
-          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-zinc-500 transition-all hover:bg-zinc-800/40 hover:text-zinc-300"
+          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-zinc-300 transition-all hover:bg-zinc-800/40 hover:text-zinc-100"
         >
           <Settings className="h-3.5 w-3.5" />
           Paramètres

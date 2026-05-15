@@ -41,7 +41,7 @@ function CollapsibleMemoBody({ content }: { content: string }) {
       {isLong && (
         <button
           onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
-          className="mt-1 flex items-center gap-1 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-300"
+          className="mt-1 flex items-center gap-1 text-xs font-medium text-zinc-400 transition-colors hover:text-zinc-300"
         >
           {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           {expanded ? "Réduire" : "Voir plus"}
@@ -65,9 +65,9 @@ export function EmployeeMemoPanel({ memos, overrides = {}, onOverrideChange }: E
         className="flex w-full items-center gap-2 px-3 py-2.5 transition-colors hover:bg-zinc-800/30"
       >
         {isOpen ? (
-          <ChevronDown className="h-3.5 w-3.5 text-zinc-500" />
+          <ChevronDown className="h-3.5 w-3.5 text-zinc-400" />
         ) : (
-          <ChevronRight className="h-3.5 w-3.5 text-zinc-500" />
+          <ChevronRight className="h-3.5 w-3.5 text-zinc-400" />
         )}
 
         <div className="flex flex-wrap items-center gap-1.5">
@@ -116,7 +116,7 @@ export function EmployeeMemoPanel({ memos, overrides = {}, onOverrideChange }: E
                 <div className="flex items-center gap-2.5 border-b border-zinc-800/50 px-3.5 py-2.5">
                   <span className="text-base">{memo.employeeIcon || "🧑‍💼"}</span>
                   <span className="flex-1 text-sm font-semibold text-zinc-200">{memo.employeeName}</span>
-                  <span className="flex items-center gap-1 text-xs text-zinc-600">
+                  <span className="flex items-center gap-1 text-xs text-zinc-400">
                     <Clock className="h-3 w-3" />
                     {(memo.durationMs / 1000).toFixed(1)}s
                   </span>
@@ -140,7 +140,7 @@ export function EmployeeMemoPanel({ memos, overrides = {}, onOverrideChange }: E
                     {!isChallenging && !currentOverride && (
                       <button
                         onClick={(e) => { e.stopPropagation(); setChallengingId(memo.employeeId); }}
-                        className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-amber-400"
+                        className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-amber-400"
                       >
                         <MessageSquarePlus className="h-3.5 w-3.5" />
                         Challenger
@@ -155,7 +155,7 @@ export function EmployeeMemoPanel({ memos, overrides = {}, onOverrideChange }: E
                           placeholder="Ex: Corrige ton analyse sur le point X, tu as omis..."
                           rows={2}
                           className="w-full rounded-lg border border-amber-900/40 bg-amber-950/10 px-3 py-2 text-sm text-zinc-300
-                            outline-none placeholder:text-zinc-600 focus:border-amber-700 focus:ring-1 focus:ring-amber-700/40"
+                            outline-none placeholder:text-zinc-400 focus:border-amber-700 focus:ring-1 focus:ring-amber-700/40"
                         />
                         {currentOverride.trim() ? (
                           <p className="text-xs text-amber-500/70">
@@ -164,7 +164,7 @@ export function EmployeeMemoPanel({ memos, overrides = {}, onOverrideChange }: E
                         ) : isChallenging ? (
                           <button
                             onClick={() => setChallengingId(null)}
-                            className="text-xs text-zinc-600 hover:text-zinc-400"
+                            className="text-xs text-zinc-400 hover:text-zinc-400"
                           >
                             Annuler
                           </button>

@@ -31,7 +31,7 @@ function WeightSelector({
                     : weight === 2
                       ? "fill-blue-400 text-blue-400"
                       : "fill-zinc-400 text-zinc-400"
-                  : "text-zinc-700 hover:text-zinc-500"
+                  : "text-zinc-700 hover:text-zinc-400"
               )}
             />
           </button>
@@ -39,7 +39,7 @@ function WeightSelector({
       </div>
       <span className={cn(
         "text-[11px] font-medium",
-        weight === 3 ? "text-amber-400" : weight === 2 ? "text-blue-400" : "text-zinc-500"
+        weight === 3 ? "text-amber-400" : weight === 2 ? "text-blue-400" : "text-zinc-400"
       )}>
         {weight === 3 ? "Critique" : weight === 2 ? "Important" : "Consultatif"}
       </span>
@@ -117,7 +117,7 @@ export function TeamProposal({
             <h3 className="text-sm font-semibold text-zinc-100">
               Équipe proposée par le Manager
             </h3>
-            <p className="text-xs text-zinc-500">
+            <p className="text-xs text-zinc-400">
               Validez, modifiez ou retirez des experts avant de lancer l&apos;analyse.
             </p>
           </div>
@@ -125,7 +125,7 @@ export function TeamProposal({
 
         {/* Model selector */}
         <div className="border-b border-zinc-800 px-5 py-4">
-          <p className="mb-2 text-xs font-medium text-zinc-500">
+          <p className="mb-2 text-xs font-medium text-zinc-400">
             Modèle utilisé par les employés
           </p>
           <ModelSelector
@@ -159,7 +159,7 @@ export function TeamProposal({
                       "mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-all duration-200",
                       proposal.accepted
                         ? "border-emerald-500/50 bg-emerald-500 text-white scale-100"
-                        : "border-zinc-700 bg-zinc-800 text-zinc-600 hover:border-zinc-600 scale-95"
+                        : "border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 scale-95"
                     )}
                   >
                     {proposal.accepted ? (
@@ -176,9 +176,9 @@ export function TeamProposal({
                       type="text"
                       value={proposal.name}
                       onChange={(e) => updateName(index, e.target.value)}
-                      className="w-full border-none bg-transparent text-sm font-semibold text-zinc-100 outline-none placeholder:text-zinc-600"
+                      className="w-full border-none bg-transparent text-sm font-semibold text-zinc-100 outline-none placeholder:text-zinc-400"
                     />
-                    <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+                    <p className="mt-0.5 text-xs leading-relaxed text-zinc-400">
                       {proposal.justification}
                     </p>
 
@@ -189,7 +189,7 @@ export function TeamProposal({
 
                     <button
                       onClick={() => setExpandedIndex(isExpanded ? null : index)}
-                      className="mt-2 flex items-center gap-1 text-[11px] font-medium text-zinc-600 transition-colors hover:text-zinc-400"
+                      className="mt-2 flex items-center gap-1 text-[11px] font-medium text-zinc-400 transition-colors hover:text-zinc-400"
                     >
                       {isExpanded ? (
                         <ChevronDown className="h-3 w-3" />
@@ -219,7 +219,7 @@ export function TeamProposal({
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-zinc-800 bg-zinc-800/30 px-5 py-3">
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
+          <div className="flex items-center gap-2 text-xs text-zinc-400">
             <Users className="h-3.5 w-3.5" />
             <span className="tabular-nums">
               <span className="text-zinc-200 font-semibold">{acceptedCount}</span>
@@ -229,7 +229,7 @@ export function TeamProposal({
           <div className="flex items-center gap-2">
             <button
               onClick={onCancel}
-              className="rounded-lg px-4 py-2 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+              className="rounded-lg px-4 py-2 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
             >
               Annuler
             </button>

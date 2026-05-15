@@ -45,11 +45,11 @@ function DownloadMessageButton({ content, timestamp }: { content: string; timest
   return (
     <button
       onClick={handleDownload}
-      className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-      title="Télécharger la décision"
+      className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+      title="Télécharger uniquement la synthèse du Manager"
     >
       <Download className="h-3.5 w-3.5" />
-      Exporter
+      Décision
     </button>
   );
 }
@@ -64,7 +64,7 @@ function CopyMessageButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+      className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
       title="Copier"
     >
       {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -108,7 +108,7 @@ function CollapsibleContent({
       {isLong && (
         <button
           onClick={() => setExpanded(!expanded)}
-          className="mt-1 flex items-center gap-1 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-300"
+          className="mt-1 flex items-center gap-1 text-xs font-medium text-zinc-400 transition-colors hover:text-zinc-300"
         >
           {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           {expanded ? "Voir moins" : "Voir plus"}
@@ -144,7 +144,7 @@ export function ChatBubble({ message, overrides, onOverrideChange, onRetry, isLa
             <span className="text-sm font-semibold text-zinc-200">
               {isUser ? "CEO" : "Manager"}
             </span>
-            <span className="text-xs text-zinc-600">
+            <span className="text-xs text-zinc-400">
               {timeAgo(message.timestamp)}
             </span>
           </div>
@@ -164,7 +164,7 @@ export function ChatBubble({ message, overrides, onOverrideChange, onRetry, isLa
                 </div>
               </CollapsibleContent>
               {message.tokenUsage && (
-                <span className="mt-1 block text-right text-[10px] text-zinc-600">
+                <span className="mt-1 block text-right text-[10px] text-zinc-400">
                   ⚡ {formatTokenCount(message.tokenUsage.totalTokens)} tokens
                 </span>
               )}
@@ -185,7 +185,7 @@ export function ChatBubble({ message, overrides, onOverrideChange, onRetry, isLa
             {!isUser && isLast && onRetry && (
               <button
                 onClick={onRetry}
-                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+                className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
                 title="Relancer"
               >
                 <RotateCcw className="h-3.5 w-3.5" />

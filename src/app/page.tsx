@@ -93,10 +93,10 @@ export default function Home() {
                 <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-zinc-700 to-zinc-800 shadow-lg shadow-zinc-900/50">
                   <span className="text-2xl font-black text-zinc-200">B</span>
                 </div>
-                <h2 className="text-xl font-semibold tracking-tight text-zinc-200">
+                <h2 className="font-display text-2xl font-semibold tracking-tight text-zinc-200">
                   Boardroom AI
                 </h2>
-                <p className="mt-2 text-sm text-zinc-500">
+                <p className="mt-2 text-sm text-zinc-400">
                   Votre comité d&apos;experts IA, prêt à analyser.
                 </p>
                 <button

@@ -53,7 +53,7 @@ export function ChatInput({
           <div className="mb-2 px-1">
             <button
               onClick={() => setTeamExpanded(!teamExpanded)}
-              className="flex items-center gap-1.5 text-[11px] text-zinc-600 transition-colors hover:text-zinc-400"
+              className="flex items-center gap-1.5 text-[11px] text-zinc-400 transition-colors hover:text-zinc-400"
             >
               {teamExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
               <span>Équipe ({activeEmployees.length})</span>
@@ -85,7 +85,7 @@ export function ChatInput({
               disabled={disabled}
               rows={1}
               className="flex-1 resize-none bg-transparent text-sm leading-relaxed text-zinc-200
-                placeholder:text-zinc-600 focus:outline-none disabled:opacity-40"
+                placeholder:text-zinc-400 focus:outline-none disabled:opacity-40"
             />
             <button
               onClick={handleSubmit}
@@ -94,7 +94,7 @@ export function ChatInput({
                 "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all",
                 hasText
                   ? "bg-zinc-100 text-zinc-900 hover:bg-white"
-                  : "bg-zinc-800 text-zinc-500"
+                  : "bg-zinc-800 text-zinc-400"
               )}
             >
               <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
@@ -103,8 +103,11 @@ export function ChatInput({
 
           {/* Keyboard hint */}
           <div className="flex items-center justify-end border-t border-zinc-800/50 px-4 py-1.5">
-            <span className="text-[11px] text-zinc-600">
-              <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-500">Enter</kbd> envoyer · <kbd className="rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-500">Shift+Enter</kbd> retour ligne
+            <span className="text-[11px] text-zinc-400">
+              <kbd className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-zinc-300">Enter</kbd>{" "}
+              envoyer ·{" "}
+              <kbd className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-zinc-300">Shift+Enter</kbd>{" "}
+              retour ligne
             </span>
           </div>
         </div>

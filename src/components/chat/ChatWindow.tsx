@@ -22,6 +22,7 @@ import { ChatBubble } from "./ChatBubble";
 import { ChatInput } from "./ChatInput";
 import { MarkdownContent } from "./MarkdownContent";
 import { TeamProposal } from "./TeamProposal";
+import { ExportConversationButton } from "./ExportConversationButton";
 
 const SUGGESTIONS = [
   { icon: "📊", label: "Analyse SWOT", prompt: "Fais une analyse SWOT complète de mon business plan pour une startup SaaS B2B." },
@@ -518,19 +519,30 @@ export function ChatWindow({
 
   return (
     <div className="flex h-full flex-col bg-zinc-950">
-      {/* Top bar with re-scope button */}
-      {activeEmployees.length > 0 && !isLoading && !pendingProposal && (
-        <div className="flex items-center justify-end border-b border-zinc-800/40 px-4 py-2">
-          <button
-            onClick={handleRescopeTeam}
-            className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-zinc-500 transition-all hover:bg-zinc-800 hover:text-zinc-300"
-            title="Reformer l'équipe"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Reformer l&apos;équipe
-          </button>
-        </div>
-      )}
+      {/* Top bar: export + re-scope */}
+      {isHydrated &&
+        !isLoading &&
+        !pendingProposal &&
+        (messages.length > 0 || activeEmployees.length > 0) && (
+          <div className="flex items-center justify-end gap-2 border-b border-zinc-800/40 px-4 py-2">
+            {messages.length > 0 && (
+              <ExportConversationButton
+                conversationId={conversationId}
+                liveMessages={messages}
+              />
+            )}
+            {activeEmployees.length > 0 && (
+              <button
+                onClick={handleRescopeTeam}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-zinc-400 transition-all hover:bg-zinc-800 hover:text-zinc-300"
+                title="Reformer l'équipe"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Reformer l&apos;équipe
+              </button>
+            )}
+          </div>
+        )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-8">
         <div className="mx-auto max-w-5xl space-y-6">
@@ -547,10 +559,10 @@ export function ChatWindow({
                 <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-800/80 ring-1 ring-zinc-700/50">
                   <span className="text-xl font-black text-zinc-300">B</span>
                 </div>
-                <h2 className="text-xl font-semibold tracking-tight text-zinc-100">
+                <h2 className="font-display text-2xl font-semibold tracking-tight text-zinc-100">
                   Bienvenue dans le Boardroom
                 </h2>
-                <p className="mt-2 text-sm text-zinc-500">
+                <p className="mt-2 text-sm text-zinc-400">
                   Posez une question. Le Manager constituera une équipe d&apos;experts adaptée.
                 </p>
               </div>
@@ -566,7 +578,7 @@ export function ChatWindow({
                       <span className="mt-0.5 text-base">{s.icon}</span>
                       <div>
                         <p className="text-sm font-medium text-zinc-300 group-hover:text-zinc-100">{s.label}</p>
-                        <p className="mt-0.5 line-clamp-2 text-xs text-zinc-600">{s.prompt}</p>
+                        <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed text-zinc-400">{s.prompt}</p>
                       </div>
                     </button>
                   ))}
@@ -650,7 +662,7 @@ export function ChatWindow({
                     <div className="space-y-2">
                       <div className="text-sm leading-relaxed text-zinc-300">
                         <MarkdownContent content={streamingContent} />
-                        <span className="inline-block text-zinc-500 animate-pulse">▌</span>
+                        <span className="inline-block text-zinc-400 animate-pulse">▌</span>
                       </div>
                       <StopButton onStop={handleStop} />
                     </div>
@@ -678,7 +690,7 @@ export function ChatWindow({
               value={rescopeSubject}
               onChange={(e) => setRescopeSubject(e.target.value)}
               placeholder="Nouveau sujet de la conversation ?"
-              className="min-w-[200px] flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-zinc-600"
+              className="min-w-[200px] flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 outline-none placeholder:text-zinc-400 focus:border-zinc-600"
               onKeyDown={(e) => e.key === "Enter" && handleRescopeSubmit()}
             />
             <button
@@ -690,7 +702,7 @@ export function ChatWindow({
             </button>
             <button
               onClick={handleRescopeCancel}
-              className="rounded-lg px-4 py-2 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+              className="rounded-lg px-4 py-2 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
             >
               Annuler
             </button>
@@ -714,7 +726,7 @@ export function ChatWindow({
 
 function LoadingDots({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-3 text-sm text-zinc-500">
+    <div className="flex items-center gap-3 text-sm text-zinc-400">
       <div className="flex gap-1">
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-600 [animation-delay:0ms]" />
         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-zinc-600 [animation-delay:150ms]" />
@@ -757,14 +769,14 @@ function StatusBar({
       <div className="flex items-center gap-6 text-xs">
         <div className="flex items-center gap-2">
           <StepDot active={phase === "employees"} done={phase === "manager"} />
-          <span className={phase === "employees" ? "text-zinc-200 font-medium" : phase === "manager" ? "text-zinc-500" : "text-zinc-600"}>
+          <span className={phase === "employees" ? "text-zinc-200 font-medium" : phase === "manager" ? "text-zinc-400" : "text-zinc-400"}>
             Analyse des experts
           </span>
         </div>
         <div className="h-px flex-1 bg-zinc-800" />
         <div className="flex items-center gap-2">
           <StepDot active={phase === "manager"} done={false} />
-          <span className={phase === "manager" ? "text-zinc-200 font-medium" : "text-zinc-600"}>
+          <span className={phase === "manager" ? "text-zinc-200 font-medium" : "text-zinc-400"}>
             Synthèse Manager
           </span>
         </div>
@@ -781,7 +793,7 @@ function StatusBar({
                 className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-all ${
                   done
                     ? "bg-emerald-950/40 text-emerald-400 ring-1 ring-emerald-900/50"
-                    : "bg-zinc-800/80 text-zinc-500 ring-1 ring-zinc-700/40"
+                    : "bg-zinc-800/80 text-zinc-400 ring-1 ring-zinc-700/40"
                 }`}
               >
                 <span>{emp.icon}</span>
@@ -796,7 +808,7 @@ function StatusBar({
       {/* Status text + stop */}
       <div className="flex items-center justify-between gap-3">
         {statusText ? (
-          <div className="flex items-center gap-2 text-sm text-zinc-500">
+          <div className="flex items-center gap-2 text-sm text-zinc-400">
             <Sparkles className="h-3.5 w-3.5 animate-pulse" />
             <span>{statusText}</span>
           </div>
