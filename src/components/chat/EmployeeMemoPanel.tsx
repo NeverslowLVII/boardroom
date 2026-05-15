@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, ChevronUp, AlertCircle, MessageSquarePlus, C
 import { cn } from "@/lib/utils";
 import type { EmployeeMemo } from "@/types";
 import { MarkdownContent } from "./MarkdownContent";
+import { CollapseFade } from "./CollapseFade";
 
 const MEMO_COLLAPSE_PX = 200;
 
@@ -32,10 +33,10 @@ function CollapsibleMemoBody({ content }: { content: string }) {
         className="overflow-hidden transition-[max-height] duration-300"
         style={{ maxHeight: isLong && !expanded ? `${MEMO_COLLAPSE_PX}px` : "none" }}
       >
-        <MarkdownContent content={content} />
+        <MarkdownContent content={content} fadeFrom="from-zinc-900" />
       </div>
       {isLong && !expanded && (
-        <div className="pointer-events-none relative -mt-8 h-8 bg-gradient-to-t from-[#111113] to-transparent" />
+        <CollapseFade from="from-zinc-900" className="-mt-8" />
       )}
       {isLong && (
         <button

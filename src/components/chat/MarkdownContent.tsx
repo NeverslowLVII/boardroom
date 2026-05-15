@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { CollapseFade } from "./CollapseFade";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -65,7 +66,7 @@ function CollapsibleCode({ lang, children }: { lang: string; children: React.Rea
         <code>{children}</code>
       </pre>
       {isLong && !expanded && (
-        <div className="pointer-events-none relative -mt-8 h-8 bg-gradient-to-t from-[#131316] to-transparent" />
+        <CollapseFade from="from-zinc-900" className="-mt-8" />
       )}
     </div>
   );
@@ -73,7 +74,13 @@ function CollapsibleCode({ lang, children }: { lang: string; children: React.Rea
 
 const TABLE_COLLAPSE_PX = 320;
 
-function CollapsibleTable({ children }: { children: React.ReactNode }) {
+function CollapsibleTable({
+  children,
+  fadeFrom = "from-zinc-950",
+}: {
+  children: React.ReactNode;
+  fadeFrom?: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [isLong, setIsLong] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -94,7 +101,7 @@ function CollapsibleTable({ children }: { children: React.ReactNode }) {
         <table className="w-full border-collapse text-sm">{children}</table>
       </div>
       {isLong && !expanded && (
-        <div className="pointer-events-none relative -mt-8 h-8 bg-gradient-to-t from-zinc-950 to-transparent" />
+        <CollapseFade from={fadeFrom} className="-mt-8" />
       )}
       {isLong && (
         <button
@@ -109,7 +116,8 @@ function CollapsibleTable({ children }: { children: React.ReactNode }) {
   );
 }
 
-const components: Components = {
+function createComponents(fadeFrom: string): Components {
+  return {
   p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-zinc-100">{children}</strong>,
   em: ({ children }) => <em className="italic text-zinc-400">{children}</em>,
@@ -144,7 +152,7 @@ const components: Components = {
     );
   },
   pre: ({ children }) => <>{children}</>,
-  table: ({ children }) => <CollapsibleTable>{children}</CollapsibleTable>,
+  table: ({ children }) => <CollapsibleTable fadeFrom={fadeFrom}>{children}</CollapsibleTable>,
   thead: ({ children }) => (
     <thead className="bg-zinc-800/50">{children}</thead>
   ),
@@ -163,13 +171,17 @@ const components: Components = {
       {children}
     </a>
   ),
-};
+  };
+}
 
 interface MarkdownContentProps {
   content: string;
+  fadeFrom?: string;
 }
 
-export function MarkdownContent({ content }: MarkdownContentProps) {
+export function MarkdownContent({ content, fadeFrom = "from-zinc-950" }: MarkdownContentProps) {
+  const components = useMemo(() => createComponents(fadeFrom), [fadeFrom]);
+
   return (
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
       {content}

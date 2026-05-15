@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { ChatMessage } from "@/types";
 import { EmployeeMemoPanel } from "./EmployeeMemoPanel";
 import { MarkdownContent } from "./MarkdownContent";
+import { CollapseFade } from "./CollapseFade";
 
 interface ChatBubbleProps {
   message: ChatMessage;
@@ -72,7 +73,15 @@ function CopyMessageButton({ text }: { text: string }) {
   );
 }
 
-function CollapsibleContent({ children, defaultCollapsed = false }: { children: React.ReactNode; defaultCollapsed?: boolean }) {
+function CollapsibleContent({
+  children,
+  defaultCollapsed = false,
+  fadeFrom = "from-zinc-950",
+}: {
+  children: React.ReactNode;
+  defaultCollapsed?: boolean;
+  fadeFrom?: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [isLong, setIsLong] = useState(false);
   const [expanded, setExpanded] = useState(true);
@@ -94,7 +103,7 @@ function CollapsibleContent({ children, defaultCollapsed = false }: { children: 
         {children}
       </div>
       {isLong && !expanded && (
-        <div className="pointer-events-none relative -mt-12 h-12 bg-gradient-to-t from-zinc-950 to-transparent" />
+        <CollapseFade from={fadeFrom} className="-mt-12 h-12" />
       )}
       {isLong && (
         <button
@@ -143,15 +152,15 @@ export function ChatBubble({ message, overrides, onOverrideChange, onRetry, isLa
           {/* Message body */}
           {isUser ? (
             <div className="rounded-xl bg-zinc-800 px-4 py-3 text-right text-sm leading-relaxed text-zinc-100">
-              <CollapsibleContent defaultCollapsed>
+              <CollapsibleContent defaultCollapsed fadeFrom="from-zinc-800">
                 <div className="whitespace-pre-wrap text-right">{message.content}</div>
               </CollapsibleContent>
             </div>
           ) : (
             <div className="relative w-full">
-              <CollapsibleContent>
+              <CollapsibleContent fadeFrom="from-zinc-950">
                 <div className="text-sm leading-relaxed text-zinc-300">
-                  <MarkdownContent content={message.content} />
+                  <MarkdownContent content={message.content} fadeFrom="from-zinc-950" />
                 </div>
               </CollapsibleContent>
               {message.tokenUsage && (
