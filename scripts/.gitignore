@@ -1,0 +1,10 @@
+# Rapports d'éval (peuvent contenir des prompts / réponses sensibles)
+eval_runs/
+
+# Config locale — jamais versionner (les clés viennent de .env à la racine)
+*.config.json
+!*.config.example.json
+
+# Env local au dossier scripts
+.env
+.env.*

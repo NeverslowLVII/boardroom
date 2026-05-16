@@ -1,6 +1,7 @@
 "use client";
 
-import { Plus, Trash2, MessageSquare, Settings } from "lucide-react";
+import Link from "next/link";
+import { Plus, Trash2, MessageSquare, Settings, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Conversation } from "@/types";
 
@@ -136,7 +137,14 @@ export function ConversationSidebar({
       </div>
 
       {/* Bottom settings */}
-      <div className="border-t border-zinc-800/50 px-2 py-2">
+      <div className="border-t border-zinc-800/50 px-2 py-2 space-y-0.5">
+        <Link
+          href="/eval"
+          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-zinc-300 transition-all hover:bg-zinc-800/40 hover:text-zinc-100"
+        >
+          <BarChart3 className="h-3.5 w-3.5" />
+          Évaluation
+        </Link>
         <button
           onClick={onOpenSettings}
           className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm text-zinc-300 transition-all hover:bg-zinc-800/40 hover:text-zinc-100"

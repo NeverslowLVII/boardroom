@@ -3,6 +3,12 @@ node_modules
 /.pnp
 .pnp.*
 __pycache__
+# Évaluation Boardroom (scripts/) — voir aussi scripts/.gitignore
+scripts/eval_runs/
+scripts/*.config.json
+!scripts/*.config.example.json
+scripts/.env
+scripts/.env.*
 
 # next.js
 /.next/

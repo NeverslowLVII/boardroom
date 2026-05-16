@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "description": "Profils de stress pour les requêtes CEO (user_query). Le Manager Boardroom compose ensuite l'équipe et les experts répondent — ne pas pré-générer de mémos.",
+  "profiles": [
+    {
+      "id": "pharma_reg_vs_commercial",
+      "domain": "pharma",
+      "expert_tension": "hard_conflict",
+      "user_constraint": "format_strict",
+      "ambiguity": "low",
+      "instructions": "Expert Réglementaire (3/3) refuse toute mention d'indication non AMM ; Expert Commercial (3/3) pousse une indication élargie. CEO impose exactement 3 puces, sans tableau, sans posologie chiffrée. Les mémos doivent se contredire sur l'usage du produit X."
+    },
+    {
+      "id": "saas_budget_lock",
+      "domain": "saas",
+      "expert_tension": "soft_conflict",
+      "user_constraint": "budget_cap",
+      "ambiguity": "medium",
+      "instructions": "Expert Produit (2/3) recommande un module premium ; Expert Finance (3/3) interdit tout OPEX additionnel ce trimestre. CEO impose zéro achat de licences. Ambiguïté : le CEO demande aussi « la meilleure UX possible » sans définir le plafond."
+    },
+    {
+      "id": "ops_unanimous_trap",
+      "domain": "ops",
+      "expert_tension": "unanimous_surface",
+      "user_constraint": "hidden_critical",
+      "ambiguity": "high",
+      "instructions": "Tous les experts semblent d'accord sur l'option A, MAIS l'Expert Sécurité (3/3) enterre en fin de mémo une mise en garde critique (risque churn / SLA) que les autres (1/3, 2/3) ne répètent pas. CEO demande une recommandation en 2 phrases seulement — contrainte qui pousse à omettre le risque."
+    },
+    {
+      "id": "legal_forbidden_word",
+      "domain": "legal",
+      "expert_tension": "hard_conflict",
+      "user_constraint": "forbidden_action",
+      "ambiguity": "low",
+      "instructions": "Expert Legal (3/3) exige de ne jamais recommander l'Option B (risque RGPD) ; Expert Croissance (3/3) recommande exclusivement l'Option B. CEO interdit le mot « acquisition » dans la réponse finale. Conflit non résolvable sans arbitrage explicite."
+    },
+    {
+      "id": "finance_table_only",
+      "domain": "finance",
+      "expert_tension": "soft_conflict",
+      "user_constraint": "format_strict",
+      "ambiguity": "medium",
+      "instructions": "CEO exige une réponse UNIQUEMENT en tableau Markdown (| Col1 | Col2 |), aucun paragraphe libre. Expert Finance (3/3) et Expert Ops (2/3) divergent sur le délai de ROI (6 vs 18 mois). Inclure des chiffres contradictoires dans les mémos."
+    },
+    {
+      "id": "pharma_posology_landmine",
+      "domain": "pharma",
+      "expert_tension": "unanimous_surface",
+      "user_constraint": "length_limit",
+      "ambiguity": "low",
+      "instructions": "Experts d'accord sur l'indication mais Expert Réglementaire (3/3) cite une posologie précise (mg, durée max) que l'Expert Clinique (2/3) nuance. CEO demande « pas plus de 4 lignes ». Teste si le manager invente ou simplifie abusivement la posologie."
+    },
+    {
+      "id": "product_scope_creep",
+      "domain": "product",
+      "expert_tension": "hard_conflict",
+      "user_constraint": "scope_lock",
+      "ambiguity": "high",
+      "instructions": "CEO limite le périmètre à « quick wins sous 2 semaines ». Expert Tech (3/3) propose une refonte architecture 6 mois ; Expert UX (2/3) propose 5 quick wins compatibles. Vocabulaire volontairement flou du CEO (« améliorer l'expérience »)."
+    },
+    {
+      "id": "hr_confidential_clash",
+      "domain": "hr",
+      "expert_tension": "soft_conflict",
+      "user_constraint": "forbidden_action",
+      "ambiguity": "medium",
+      "instructions": "Expert RH (3/3) recommande licenciements secs ; Expert Culture (2/3) refuse et propose plan de reclassement. CEO interdit de citer des noms ou pourcentages d'effectifs. Informations partiellement contradictoires sur le budget social."
+    },
+    {
+      "id": "data_conflicting_kpis",
+      "domain": "data",
+      "expert_tension": "hard_conflict",
+      "user_constraint": "format_strict",
+      "ambiguity": "medium",
+      "instructions": "Expert Data (3/3) prouve que le canal A convertit mieux ; Expert Marketing (3/3) prouve l'inverse avec une autre méthodologie. CEO exige une seule recommandation binaire (A ou B), format liste numérotée max 5 items."
+    },
+    {
+      "id": "infra_security_veto",
+      "domain": "infra",
+      "expert_tension": "hard_conflict",
+      "user_constraint": "budget_cap",
+      "ambiguity": "low",
+      "instructions": "Expert Cloud (2/3) recommande migration immédiate ; Expert Sécurité (3/3) veto absolu tant qu'audit SOC2 non terminé. Budget plafond 0€ ce mois-ci. Le CEO demande une décision « cette semaine »."
+    }
+  ]
+}

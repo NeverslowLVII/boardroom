@@ -1,0 +1,19 @@
+{
+  "_comment": "OPTIONNEL. Ne jamais y mettre de clé API — NVIDIA_NIM_API_KEY dans .env à la racine.",
+  "manager": {
+    "connectionId": "custom-id",
+    "modelId": "moonshotai/kimi-k2.6",
+    "systemPrompt": "..."
+  },
+  "connections": [
+    {
+      "id": "custom-id",
+      "name": "Nvidia NIM",
+      "baseUrl": "https://integrate.api.nvidia.com/v1"
+    }
+  ],
+  "employeeDefaults": {
+    "connectionId": "custom-id",
+    "modelId": "moonshotai/kimi-k2.6"
+  }
+}

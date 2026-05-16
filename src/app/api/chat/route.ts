@@ -1,6 +1,13 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
-import { formatApiError } from "@/lib/utils";
+import {
+  buildSynthesisPrompt,
+  extractUsage,
+  formatApiError,
+  resolveConnection,
+  sumTokenUsage,
+} from "@/lib/synthesis";
+import { queryEmployee } from "@/lib/employee-query";
 import type {
   ApiConnection,
   EmployeeConfig,
@@ -16,147 +23,6 @@ interface ChatPayload {
   connections: ApiConnection[];
   overrides?: Record<string, string>;
   fastMode?: boolean;
-}
-
-function resolveConnection(
-  connectionId: string,
-  connections: ApiConnection[]
-): ApiConnection | null {
-  return connections.find((c) => c.id === connectionId) ?? null;
-}
-
-function stripThinkingTags(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-}
-
-function extractUsage(usage: {
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  total_tokens?: number;
-} | undefined): TokenUsage | undefined {
-  if (!usage) return undefined;
-  return {
-    promptTokens: usage.prompt_tokens ?? 0,
-    completionTokens: usage.completion_tokens ?? 0,
-    totalTokens: usage.total_tokens ?? 0,
-  };
-}
-
-function sumTokenUsage(usages: (TokenUsage | undefined)[]): TokenUsage | undefined {
-  const valid = usages.filter((u): u is TokenUsage => u != null);
-  if (valid.length === 0) return undefined;
-  return {
-    promptTokens: valid.reduce((s, u) => s + u.promptTokens, 0),
-    completionTokens: valid.reduce((s, u) => s + u.completionTokens, 0),
-    totalTokens: valid.reduce((s, u) => s + u.totalTokens, 0),
-  };
-}
-
-async function queryEmployee(
-  employee: EmployeeConfig,
-  connections: ApiConnection[],
-  messages: { role: string; content: string }[]
-): Promise<EmployeeResult> {
-  const start = Date.now();
-  const conn = resolveConnection(employee.connectionId, connections);
-
-  if (!conn) {
-    return {
-      employeeId: employee.id,
-      employeeName: employee.name,
-      employeeIcon: employee.icon,
-      content: null,
-      error: `Connexion introuvable (id: ${employee.connectionId})`,
-      durationMs: Date.now() - start,
-    };
-  }
-
-  if (!employee.rolePrompt) {
-    return {
-      employeeId: employee.id,
-      employeeName: employee.name,
-      employeeIcon: employee.icon,
-      content: null,
-      error: "Aucun system prompt défini pour cet employé.",
-      durationMs: Date.now() - start,
-    };
-  }
-
-  try {
-    const client = new OpenAI({
-      baseURL: conn.baseUrl,
-      apiKey: conn.apiKey,
-    });
-
-    const response = await client.chat.completions.create({
-      model: employee.modelId,
-      messages: [
-        { role: "system" as const, content: employee.rolePrompt },
-        ...messages.map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        })),
-      ],
-    });
-
-    const raw = response.choices[0]?.message?.content ?? "";
-    const tokenUsage = extractUsage(response.usage);
-
-    return {
-      employeeId: employee.id,
-      employeeName: employee.name,
-      employeeIcon: employee.icon,
-      content: stripThinkingTags(raw),
-      error: null,
-      durationMs: Date.now() - start,
-      tokenUsage,
-    };
-  } catch (err) {
-    return {
-      employeeId: employee.id,
-      employeeName: employee.name,
-      employeeIcon: employee.icon,
-      content: null,
-      error: formatApiError(err),
-      durationMs: Date.now() - start,
-    };
-  }
-}
-
-const WEIGHT_LABELS: Record<number, string> = {
-  1: "Consultatif",
-  2: "Important",
-  3: "Critique",
-};
-
-function buildSynthesisPrompt(
-  userMessage: string,
-  results: EmployeeResult[],
-  employees: EmployeeConfig[]
-): string {
-  const memos = results
-    .map((r) => {
-      const emp = employees.find((e) => e.id === r.employeeId);
-      const weight = emp?.weight ?? 2;
-      const weightLabel = WEIGHT_LABELS[weight] ?? "Important";
-
-      if (r.error) {
-        return `[Mémo de ${r.employeeName}] (Pondération: ${weight}/3 - ${weightLabel}) ERREUR : ${r.error} (temps: ${r.durationMs}ms)`;
-      }
-      return `[Mémo de ${r.employeeName}] (Pondération: ${weight}/3 - ${weightLabel}) (temps: ${r.durationMs}ms)\n${r.content}`;
-    })
-    .join("\n\n---\n\n");
-
-  return `Le CEO a posé la question suivante :
-"${userMessage}"
-
-Voici les mémos de tes employés :
-
-${memos}
-
-Fais ta synthèse et présente ta réponse au CEO.
-
-INSTRUCTION DYNAMIQUE : Analyse immédiatement le niveau d'accord entre les experts. S'ils sont unanimes sur la solution, IGNORE le format avec 'Désaccords' et 'Compromis'. Rédige à la place une réponse ultra-courte commençant par 'L'ÉQUIPE EST UNANIME' suivie du plan d'action direct.`;
 }
 
 export async function POST(request: NextRequest) {
@@ -185,7 +51,6 @@ export async function POST(request: NextRequest) {
     if (fastMode) {
       managerPrompt = userMessage;
     } else {
-      // Phase 1: parallel employee queries (with optional per-employee overrides)
       employeeResults = await Promise.all(
         activeEmployees.map((emp) => {
           let history = conversationHistory;
