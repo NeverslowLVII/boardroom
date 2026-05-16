@@ -16,10 +16,12 @@ import {
   sleepInterruptible,
   throwIfAborted,
 } from "@/lib/eval/abort";
+import { isLikelyLocalLlmEndpoint } from "@/lib/boardroom-config";
 import {
-  resolveEvalLlmConfig,
+  resolveExecuteLlmConfig,
   type EvalLlmProvider,
 } from "@/lib/eval/llm-config";
+import type { ApiConnection, ManagerConfig } from "@/types";
 
 const EVAL_RUNS_DIR = path.join(process.cwd(), "scripts", "eval_runs");
 
@@ -28,10 +30,13 @@ const SAFE_REPORT = /^[a-zA-Z0-9._-]+\.report\.json$/;
 interface ExecuteBody {
   count?: number;
   sleepMs?: number;
+  /** Même payload que le chat (Paramètres). Prioritaire sur provider/baseUrl/.env */
+  manager?: ManagerConfig;
+  connections?: ApiConnection[];
+  /** Fallback scripts / ancienne UI eval */
   provider?: EvalLlmProvider;
   baseUrl?: string;
   apiKey?: string;
-  /** Surcharge le modèle (manager, experts, juge). Vide = .env */
   modelId?: string;
   managerSystemPrompt?: string;
   /** Rapport précédent (basename) pour comparaison chiffrée des agrégats */
@@ -88,7 +93,9 @@ export async function POST(request: NextRequest) {
   const sleepMs = Math.min(120_000, Math.max(0, body.sleepMs ?? 5000));
 
   try {
-    const llm = resolveEvalLlmConfig({
+    const llm = resolveExecuteLlmConfig({
+      manager: body.manager,
+      connections: body.connections,
       provider: body.provider,
       baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : undefined,
       apiKey: typeof body.apiKey === "string" ? body.apiKey : undefined,
@@ -244,7 +251,7 @@ export async function POST(request: NextRequest) {
                 employeeDefaults: llm.employeeDefaults,
                 signal: abortSignal,
                 evalFallback: true,
-                parallelExperts: llm.provider === "local",
+                parallelExperts: isLikelyLocalLlmEndpoint(llm.baseUrl),
                 onPhase: (phase, detail) => {
                   send({
                     type: "case_phase",

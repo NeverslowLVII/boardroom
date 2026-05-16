@@ -1,7 +1,29 @@
-import { BOARDROOM_MANAGER_DEFAULT_PROMPT } from "@/lib/eval/default-manager-prompt";
+/**
+ * Config LLM via variables d'environnement — réservé aux scripts CLI (sans Paramètres UI).
+ * Chat et eval UI : @/lib/boardroom-config + payload manager/connections.
+ */
+import {
+  BOARDROOM_MANAGER_DEFAULT_PROMPT,
+  LOCAL_OPENAI_DUMMY_KEY,
+  normalizeConnectionBaseUrl,
+  resolveBoardroomSession,
+  type BoardroomSession,
+  type LlmProviderKind,
+} from "@/lib/boardroom-config";
 import type { ApiConnection, ManagerConfig } from "@/types";
 
-export type EvalLlmProvider = "nim" | "local" | "custom";
+export type EvalLlmProvider = LlmProviderKind;
+export type EvalLlmConfig = BoardroomSession;
+
+export {
+  BOARDROOM_MANAGER_DEFAULT_PROMPT,
+  LOCAL_OPENAI_DUMMY_KEY,
+  normalizeConnectionBaseUrl as normalizeEvalBaseUrl,
+  resolveBoardroomSession,
+  resolveBoardroomSession as resolveBoardroomLlmConfig,
+  isLikelyLocalLlmEndpoint,
+  inferLlmProviderFromBaseUrl as inferEvalProviderFromBaseUrl,
+} from "@/lib/boardroom-config";
 
 export const EVAL_CONN_ID = "eval-llm";
 
@@ -12,7 +34,6 @@ export const NIM_DEFAULT_MODEL = "moonshotai/kimi-k2.6";
 export const CUSTOM_DEFAULT_BASE_URL = "https://api.openai.com/v1";
 export const CUSTOM_DEFAULT_MODEL = "gpt-4o-mini";
 
-/** Presets UI — endpoints OpenAI-compatible courants */
 export const EVAL_API_PRESETS = [
   { label: "OpenAI", url: "https://api.openai.com/v1" },
   { label: "Groq", url: "https://api.groq.com/openai/v1" },
@@ -21,49 +42,12 @@ export const EVAL_API_PRESETS = [
   { label: "OpenRouter", url: "https://openrouter.ai/api/v1" },
 ] as const;
 
-/** Clé factice pour clients OpenAI (Ollama, LM Studio sans auth). */
-export const LOCAL_OPENAI_DUMMY_KEY = "ollama";
-
 export interface EvalLlmOverrides {
   provider?: EvalLlmProvider;
   baseUrl?: string;
   apiKey?: string;
   modelId?: string;
   managerSystemPrompt?: string;
-}
-
-export interface EvalLlmConfig {
-  provider: EvalLlmProvider;
-  connectionId: string;
-  baseUrl: string;
-  apiKey: string;
-  model: string;
-  connectionName: string;
-  manager: ManagerConfig;
-  connections: ApiConnection[];
-  employeeDefaults: { connectionId: string; modelId: string };
-}
-
-function normalizeBaseUrl(url: string): string {
-  return url.trim().replace(/\/+$/, "");
-}
-
-/**
- * Corrige les URLs locales courantes (LM Studio = /v1, pas /api/v1 ; IPv4 fiable sous Node/Windows).
- */
-export function normalizeEvalBaseUrl(
-  url: string,
-  provider: EvalLlmProvider
-): string {
-  let u = normalizeBaseUrl(url);
-  if (provider !== "local") return u;
-
-  u = u.replace(/^http:\/\/localhost\b/i, "http://127.0.0.1");
-  u = u.replace(/\/api\/v1$/i, "/v1");
-  if (/\/api\/v1\/?$/i.test(u)) {
-    u = u.replace(/\/api\/v1\/?$/i, "/v1");
-  }
-  return u;
 }
 
 export function resolveEvalProvider(
@@ -92,7 +76,7 @@ function buildEvalConnection(
   model: string,
   managerSystemPrompt: string,
   connectionName: string
-): EvalLlmConfig {
+): BoardroomSession {
   const manager: ManagerConfig = {
     connectionId: EVAL_CONN_ID,
     modelId: model,
@@ -100,12 +84,7 @@ function buildEvalConnection(
   };
 
   const connections: ApiConnection[] = [
-    {
-      id: EVAL_CONN_ID,
-      name: connectionName,
-      baseUrl,
-      apiKey,
-    },
+    { id: EVAL_CONN_ID, name: connectionName, baseUrl, apiKey },
   ];
 
   return {
@@ -123,7 +102,7 @@ function buildEvalConnection(
 
 export function resolveEvalLlmConfig(
   overrides: EvalLlmOverrides = {}
-): EvalLlmConfig {
+): BoardroomSession {
   const provider = resolveEvalProvider(overrides.provider);
   const managerSystemPrompt =
     overrides.managerSystemPrompt?.trim() ||
@@ -131,7 +110,7 @@ export function resolveEvalLlmConfig(
     BOARDROOM_MANAGER_DEFAULT_PROMPT;
 
   if (provider === "local") {
-    const baseUrl = normalizeEvalBaseUrl(
+    const baseUrl = normalizeConnectionBaseUrl(
       overrides.baseUrl?.trim() ||
         process.env.BOARDROOM_EVAL_BASE_URL?.trim() ||
         process.env.OLLAMA_BASE_URL?.trim() ||
@@ -159,7 +138,7 @@ export function resolveEvalLlmConfig(
   }
 
   if (provider === "custom") {
-    const baseUrl = normalizeEvalBaseUrl(
+    const baseUrl = normalizeConnectionBaseUrl(
       overrides.baseUrl?.trim() ||
         process.env.BOARDROOM_EVAL_BASE_URL?.trim() ||
         CUSTOM_DEFAULT_BASE_URL,
@@ -172,7 +151,7 @@ export function resolveEvalLlmConfig(
       "";
     if (!apiKey) {
       throw new Error(
-        "Clé API requise pour une API personnalisée (UI, BOARDROOM_EVAL_API_KEY ou OPENAI_API_KEY dans .env)."
+        "Clé API requise pour une API personnalisée (BOARDROOM_EVAL_API_KEY ou OPENAI_API_KEY dans .env)."
       );
     }
     const model =
@@ -193,11 +172,11 @@ export function resolveEvalLlmConfig(
   const apiKey = process.env.NVIDIA_NIM_API_KEY?.trim();
   if (!apiKey) {
     throw new Error(
-      "NVIDIA_NIM_API_KEY manquant dans .env (ou choisissez Local / Autre API)."
+      "NVIDIA_NIM_API_KEY manquant dans .env (scripts CLI sans Paramètres UI)."
     );
   }
 
-  const baseUrl = normalizeEvalBaseUrl(
+  const baseUrl = normalizeConnectionBaseUrl(
     overrides.baseUrl?.trim() ||
       process.env.NVIDIA_NIM_BASE_URL?.trim() ||
       NIM_DEFAULT_BASE_URL,
@@ -216,6 +195,35 @@ export function resolveEvalLlmConfig(
     managerSystemPrompt,
     "Nvidia NIM"
   );
+}
+
+export function resolveExecuteLlmConfig(body: {
+  manager?: ManagerConfig;
+  connections?: ApiConnection[];
+  managerSystemPrompt?: string;
+  provider?: EvalLlmProvider;
+  baseUrl?: string;
+  apiKey?: string;
+  modelId?: string;
+}): BoardroomSession {
+  if (
+    body.manager?.connectionId &&
+    Array.isArray(body.connections) &&
+    body.connections.length > 0
+  ) {
+    return resolveBoardroomSession({
+      manager: body.manager,
+      connections: body.connections,
+      managerSystemPrompt: body.managerSystemPrompt,
+    });
+  }
+  return resolveEvalLlmConfig({
+    provider: body.provider,
+    baseUrl: body.baseUrl,
+    apiKey: body.apiKey,
+    modelId: body.modelId,
+    managerSystemPrompt: body.managerSystemPrompt,
+  });
 }
 
 export interface FetchEvalModelsParams {

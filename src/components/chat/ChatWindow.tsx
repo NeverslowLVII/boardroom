@@ -13,10 +13,10 @@ import {
   clearEmployeesFromConversation,
 } from "@/lib/conversation-store";
 import {
-  getConnections,
-  getManager,
-  getModelsCache,
-} from "@/lib/storage";
+  isSettingsReady,
+  loadBoardroomSettings,
+} from "@/lib/boardroom-settings";
+import { getModelsCache } from "@/lib/storage";
 import { sendChatMessage } from "@/lib/chat-client";
 import { ChatBubble } from "./ChatBubble";
 import { ChatInput } from "./ChatInput";
@@ -64,12 +64,14 @@ export function ChatWindow({
   const streamingContentRef = useRef("");
 
   const isConfigured = useMemo(
-    () => getConnections().length > 0 && !!getManager().modelId,
+    () => isSettingsReady(loadBoardroomSettings()),
     [configVersion, isHydrated]
   );
 
   const displayEmployees = useMemo(() => {
-    const validConnectionIds = new Set(getConnections().map((c) => c.id));
+    const validConnectionIds = new Set(
+      loadBoardroomSettings().connections.map((c) => c.id)
+    );
     return activeEmployees.filter(
       (e) => e.isActive && validConnectionIds.has(e.connectionId)
     );
@@ -165,8 +167,7 @@ export function ChatWindow({
       if (!conv) return;
 
       const employees = conv.employees;
-      const manager = getManager();
-      const connections = getConnections();
+      const { manager, connections } = loadBoardroomSettings();
 
       let fullContent = "";
       let memos: EmployeeMemo[] = [];
@@ -222,10 +223,9 @@ export function ChatWindow({
 
   const requestTeamProposal = useCallback(
     async (prompt: string) => {
-      const manager = getManager();
-      const connections = getConnections();
+      const { manager, connections } = loadBoardroomSettings();
 
-      if (!manager.connectionId || !manager.modelId) {
+      if (!isSettingsReady({ manager, connections })) {
         return "Le Manager n'est pas configuré. Allez dans les paramètres pour sélectionner un modèle pour le Manager.";
       }
 

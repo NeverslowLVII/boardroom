@@ -7,21 +7,16 @@ import type {
   EvalReport,
 } from "@/types/eval-report";
 import type { FetchedModel } from "@/types";
-
-import type { EvalLlmProvider } from "@/lib/eval/llm-config";
 import {
-  CUSTOM_DEFAULT_BASE_URL,
-  EVAL_API_PRESETS,
-  LOCAL_DEFAULT_BASE_URL,
-  LOCAL_DEFAULT_MODEL,
-  NIM_DEFAULT_MODEL,
-  normalizeEvalBaseUrl,
-} from "@/lib/eval/llm-config";
-
-const EVAL_MODEL_STORAGE_KEY = "boardroom_eval_model";
-const EVAL_PROVIDER_STORAGE_KEY = "boardroom_eval_provider";
-const EVAL_BASE_URL_STORAGE_KEY = "boardroom_eval_base_url";
-const EVAL_API_KEY_STORAGE_KEY = "boardroom_eval_api_key";
+  expertsRunInParallel,
+  fetchBoardroomModels,
+  getManagerConnection,
+  isSettingsReady,
+  loadBoardroomSettings,
+  loadModelsCache,
+  testManagerConnection,
+  type BoardroomSettings,
+} from "@/lib/boardroom-settings";
 
 import {
   BarChart3,
@@ -203,18 +198,28 @@ export default function EvalDashboardPage() {
   const [execCount, setExecCount] = useState(10);
   const [sleepMs, setSleepMs] = useState(5000);
   const [baselineFile, setBaselineFile] = useState("");
-  const [managerPromptDraft, setManagerPromptDraft] = useState("");
-  const [llmProvider, setLlmProvider] = useState<EvalLlmProvider>("nim");
-  const [apiBaseUrl, setApiBaseUrl] = useState(LOCAL_DEFAULT_BASE_URL);
-  const [apiKey, setApiKey] = useState("");
-  const usesOwnEndpoint =
-    llmProvider === "local" || llmProvider === "custom";
-  const [modelId, setModelId] = useState(NIM_DEFAULT_MODEL);
-  const [evalModels, setEvalModels] = useState<FetchedModel[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(true);
+  const [settings, setSettings] = useState<BoardroomSettings>(() =>
+    loadBoardroomSettings()
+  );
+  const [models, setModels] = useState<FetchedModel[]>(() => loadModelsCache());
+  const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsFetchHint, setModelsFetchHint] = useState<string | null>(null);
   const [healthChecking, setHealthChecking] = useState(false);
   const [healthHint, setHealthHint] = useState<string | null>(null);
+
+  const { manager, connections } = settings;
+  const activeConnection = useMemo(
+    () => getManagerConnection(settings),
+    [settings]
+  );
+  const configReady = isSettingsReady(settings);
+  const expertsParallel = expertsRunInParallel(settings);
+
+  const refreshBoardroomSettings = useCallback(() => {
+    const next = loadBoardroomSettings();
+    setSettings(next);
+    setModels(loadModelsCache());
+  }, []);
 
   const validResults = useMemo(() => {
     const r = report?.results ?? [];
@@ -283,20 +288,6 @@ export default function EvalDashboardPage() {
     }
   }, []);
 
-  const normalizedApiBaseUrl = useMemo(
-    () =>
-      usesOwnEndpoint
-        ? normalizeEvalBaseUrl(
-            apiBaseUrl.trim() ||
-              (llmProvider === "custom"
-                ? CUSTOM_DEFAULT_BASE_URL
-                : LOCAL_DEFAULT_BASE_URL),
-            llmProvider
-          )
-        : "",
-    [apiBaseUrl, llmProvider, usesOwnEndpoint]
-  );
-
   const stopEvaluation = useCallback(() => {
     if (!runAbortRef.current) return;
     appendRunLog("warn", "Arrêt demandé — interruption en cours…");
@@ -315,7 +306,24 @@ export default function EvalDashboardPage() {
     setRunMeta(null);
     setRunLog([]);
     setLiveCases([]);
-    appendRunLog("info", "Connexion au serveur d'évaluation…");
+    const { manager: managerSnapshot, connections: connectionsSnapshot } =
+      loadBoardroomSettings();
+    const conn = getManagerConnection({
+      manager: managerSnapshot,
+      connections: connectionsSnapshot,
+    });
+    if (!isSettingsReady({ manager: managerSnapshot, connections: connectionsSnapshot })) {
+      setRunError(
+        "Configurez une connexion API et le modèle du manager dans Paramètres (page chat)."
+      );
+      setRunning(false);
+      return;
+    }
+
+    appendRunLog(
+      "info",
+      `Connexion — ${conn!.name}, modèle ${managerSnapshot.modelId}`
+    );
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -334,13 +342,9 @@ export default function EvalDashboardPage() {
         body: JSON.stringify({
           count: execCount,
           sleepMs,
-          provider: llmProvider,
-          baseUrl: usesOwnEndpoint ? normalizedApiBaseUrl || undefined : undefined,
-          apiKey:
-            usesOwnEndpoint && apiKey.trim() ? apiKey.trim() : undefined,
-          modelId: modelId.trim() || undefined,
+          manager: managerSnapshot,
+          connections: connectionsSnapshot,
           baselineReport: baselineFile.trim() || undefined,
-          managerSystemPrompt: managerPromptDraft.trim() || undefined,
         }),
       });
 
@@ -400,7 +404,7 @@ export default function EvalDashboardPage() {
             setRunProgress({ cur: 0, total, phase: undefined });
             appendRunLog(
               "info",
-              `Run démarrée — ${total} cas, matrice v${version ?? "?"}, modèle ${judgeModel ?? modelId}`
+              `Run démarrée — ${total} cas, matrice v${version ?? "?"}, modèle ${judgeModel ?? managerSnapshot.modelId}`
             );
             const bl = ev.baseline as { filename?: string } | null;
             if (bl?.filename) {
@@ -564,144 +568,56 @@ export default function EvalDashboardPage() {
     baselineFile,
     execCount,
     fetchDevReports,
-    managerPromptDraft,
-    llmProvider,
-    apiKey,
-    normalizedApiBaseUrl,
-    modelId,
     sleepMs,
-    usesOwnEndpoint,
   ]);
 
   const testApiConnection = useCallback(async () => {
     setHealthChecking(true);
     setHealthHint(null);
     try {
-      const q = new URLSearchParams({
-        provider: llmProvider,
-        baseUrl: normalizedApiBaseUrl,
-      });
-      if (apiKey.trim()) q.set("apiKey", apiKey.trim());
-      const res = await fetch(`/api/eval/health?${q}`);
-      const data = (await res.json()) as {
-        ok?: boolean;
-        hint?: string;
-        error?: string;
-        fetchError?: string;
-        modelCount?: number;
-      };
-      if (data.ok) {
-        setHealthHint(
-          `Connexion OK (${data.modelCount ?? 0} modèle(s) détecté(s) depuis le serveur Next.js).`
-        );
-      } else {
-        setHealthHint(data.hint ?? data.error ?? data.fetchError ?? "Échec.");
-      }
+      const result = await testManagerConnection(loadBoardroomSettings());
+      setHealthHint(result.message);
     } catch {
       setHealthHint("Test impossible (serveur Next.js indisponible).");
     } finally {
       setHealthChecking(false);
     }
-  }, [apiKey, llmProvider, normalizedApiBaseUrl]);
+  }, []);
 
-  const fetchEvalModels = useCallback(
-    async (keepSelection = false) => {
-      setModelsLoading(true);
-      setModelsFetchHint(null);
-      try {
-        const q = new URLSearchParams({ provider: llmProvider });
-        if (usesOwnEndpoint) {
-          q.set("baseUrl", normalizedApiBaseUrl);
-          if (apiKey.trim()) q.set("apiKey", apiKey.trim());
-        }
-        const res = await fetch(`/api/eval/models?${q}`);
-        const data = (await res.json()) as {
-          defaultModel?: string;
-          models?: FetchedModel[];
-          fetchError?: string;
-          error?: string;
-        };
-        if (!res.ok) {
-          setModelsFetchHint(data.error ?? "Liste de modèles indisponible.");
-          return;
-        }
-        const list = data.models ?? [];
-        setEvalModels(list);
-        if (!keepSelection) {
-          const saved =
-            typeof window !== "undefined"
-              ? localStorage.getItem(EVAL_MODEL_STORAGE_KEY)?.trim()
-              : null;
-          const fallback =
-            llmProvider === "local"
-              ? LOCAL_DEFAULT_MODEL
-              : llmProvider === "custom"
-                ? "gpt-4o-mini"
-                : NIM_DEFAULT_MODEL;
-          const pick =
-            saved || data.defaultModel || list[0]?.id || fallback;
-          setModelId(pick);
-        }
-        if (data.fetchError) {
-          setModelsFetchHint(
-            `Liste partielle : ${data.fetchError} (saisie manuelle possible).`
-          );
-        }
-      } catch {
-        setModelsFetchHint("Impossible de joindre l'API modèles.");
-      } finally {
-        setModelsLoading(false);
+  const refreshModels = useCallback(async () => {
+    const { connections: conns, manager: mgr } = loadBoardroomSettings();
+    if (conns.filter((c) => c.baseUrl?.trim() && c.apiKey).length === 0) {
+      setModelsFetchHint(
+        "Aucune connexion complète — configurez-les dans Paramètres."
+      );
+      return;
+    }
+    setModelsLoading(true);
+    setModelsFetchHint(null);
+    try {
+      const { models: list, errors } = await fetchBoardroomModels(conns);
+      setModels(list);
+      const errForConn = errors.find((e) => e.connectionId === mgr.connectionId);
+      if (errForConn) {
+        setModelsFetchHint(`Connexion manager : ${errForConn.error}`);
       }
-    },
-    [apiKey, llmProvider, normalizedApiBaseUrl, usesOwnEndpoint]
-  );
-
-  useEffect(() => {
-    if (modelId.trim()) {
-      localStorage.setItem(EVAL_MODEL_STORAGE_KEY, modelId.trim());
+    } catch {
+      setModelsFetchHint("Impossible de joindre l'API modèles.");
+    } finally {
+      setModelsLoading(false);
     }
-  }, [modelId]);
-
-  useEffect(() => {
-    localStorage.setItem(EVAL_PROVIDER_STORAGE_KEY, llmProvider);
-  }, [llmProvider]);
-
-  useEffect(() => {
-    if (usesOwnEndpoint && apiBaseUrl.trim()) {
-      localStorage.setItem(EVAL_BASE_URL_STORAGE_KEY, apiBaseUrl.trim());
-    }
-  }, [apiBaseUrl, usesOwnEndpoint]);
-
-  useEffect(() => {
-    if (llmProvider === "custom" && apiKey.trim()) {
-      localStorage.setItem(EVAL_API_KEY_STORAGE_KEY, apiKey.trim());
-    }
-  }, [apiKey, llmProvider]);
-
-  useEffect(() => {
-    const savedProvider = localStorage.getItem(
-      EVAL_PROVIDER_STORAGE_KEY
-    ) as EvalLlmProvider | null;
-    if (
-      savedProvider === "local" ||
-      savedProvider === "nim" ||
-      savedProvider === "custom"
-    ) {
-      setLlmProvider(savedProvider);
-    }
-    const savedBase = localStorage.getItem(EVAL_BASE_URL_STORAGE_KEY)?.trim();
-    if (savedBase) setApiBaseUrl(savedBase);
-    const savedKey = localStorage.getItem(EVAL_API_KEY_STORAGE_KEY)?.trim();
-    if (savedKey) setApiKey(savedKey);
   }, []);
 
   useEffect(() => {
+    refreshBoardroomSettings();
     void fetchDevReports();
-  }, [fetchDevReports]);
+  }, [fetchDevReports, refreshBoardroomSettings]);
 
   useEffect(() => {
-    void fetchEvalModels();
-  }, [fetchEvalModels]);
+    const onFocus = () => refreshBoardroomSettings();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshBoardroomSettings]);
 
   return (
     <div className="mx-auto flex min-h-screen max-w-4xl flex-col gap-10 px-4 py-10">
@@ -719,7 +635,7 @@ export default function EvalDashboardPage() {
               matrice de stress déterministe
             </strong>{" "}
             (même scénarios à chaque fois) ou importez un rapport. Les scores
-            reflètent le juge NIM&nbsp;: baisse des omissions / hallucinations et
+            reflètent le juge LLM&nbsp;: baisse des omissions / hallucinations et
             hausse du respect des contraintes = mieux. Pour comparer deux versions
             du prompt manager, enregistrez un rapport baseline puis relancez avec
             le prompt modifié.
@@ -738,87 +654,67 @@ export default function EvalDashboardPage() {
           Run d&apos;évaluation (dev)
         </h2>
         <p className="mt-2 text-sm text-muted">
-          Nvidia NIM, <strong className="font-medium text-zinc-300">local</strong> (Ollama,
-          LM Studio) ou <strong className="font-medium text-zinc-300">autre API</strong>{" "}
-          compatible OpenAI (OpenAI, Groq, Together, Mistral, OpenRouter…). Fichier{" "}
+          Utilise les mêmes{" "}
+          <strong className="font-medium text-zinc-300">connexions API</strong> et le{" "}
+          <strong className="font-medium text-zinc-300">modèle manager</strong> que le chat
+          (Paramètres sur la page principale). Matrice{" "}
           <code className="font-mono text-xs text-zinc-400">scripts/stress_matrix.json</code>
           .
         </p>
-        <label className="mt-4 block text-sm">
-          <span className="text-muted">Fournisseur LLM</span>
-          <select
-            value={llmProvider}
-            onChange={(e) => {
-              const v = e.target.value as EvalLlmProvider;
-              setLlmProvider(v);
-              if (v === "local" && !apiBaseUrl.trim()) {
-                setApiBaseUrl(LOCAL_DEFAULT_BASE_URL);
-              }
-              if (v === "custom" && !apiBaseUrl.trim()) {
-                setApiBaseUrl(CUSTOM_DEFAULT_BASE_URL);
-              }
-            }}
-            disabled={running}
-            className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm disabled:opacity-50"
-          >
-            <option value="nim">Nvidia NIM (cloud)</option>
-            <option value="local">Local (Ollama / LM Studio)</option>
-            <option value="custom">Autre API (OpenAI-compatible)</option>
-          </select>
-        </label>
-        {usesOwnEndpoint ? (
-          <div className="mt-4 space-y-3 rounded-lg border border-zinc-800 bg-zinc-950/50 p-3">
-            <label className="block text-sm">
-              <span className="text-muted">URL de l&apos;API (base /v1)</span>
-              <input
-                type="url"
-                value={apiBaseUrl}
-                onChange={(e) => setApiBaseUrl(e.target.value)}
-                disabled={running}
-                placeholder={
-                  llmProvider === "custom"
-                    ? CUSTOM_DEFAULT_BASE_URL
-                    : LOCAL_DEFAULT_BASE_URL
-                }
-                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs disabled:opacity-50"
-              />
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {(llmProvider === "local"
-                ? [
-                    { label: "Ollama", url: "http://127.0.0.1:11434/v1" },
-                    { label: "LM Studio", url: "http://127.0.0.1:1234/v1" },
-                  ]
-                : [...EVAL_API_PRESETS]
-              ).map((preset) => (
+        {!configReady ? (
+          <p className="mt-4 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-200/90">
+            Configurez au moins une connexion (URL + clé) et le modèle du manager dans{" "}
+            <Link
+              href="/"
+              className="font-medium underline underline-offset-2 hover:text-amber-100"
+            >
+              Paramètres
+            </Link>{" "}
+            sur la page chat, puis revenez ici.
+          </p>
+        ) : (
+          <div className="mt-4 space-y-3 rounded-lg border border-zinc-800 bg-zinc-950/50 p-3 text-sm">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-muted">Connexion manager</p>
+                <p className="mt-0.5 font-medium text-zinc-200">
+                  {activeConnection?.name ?? "—"}
+                </p>
+                <p className="mt-1 break-all font-mono text-xs text-zinc-500">
+                  {activeConnection?.baseUrl}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
                 <button
-                  key={preset.url}
                   type="button"
                   disabled={running}
-                  onClick={() => setApiBaseUrl(preset.url)}
+                  onClick={() => refreshBoardroomSettings()}
                   className="rounded-md border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800 disabled:opacity-50"
                 >
-                  {preset.label}
+                  Actualiser
                 </button>
-              ))}
-              <button
-                type="button"
-                disabled={running || healthChecking}
-                onClick={() => void testApiConnection()}
-                className="rounded-md border border-emerald-800/60 bg-emerald-950/40 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-950/70 disabled:opacity-50"
-              >
-                {healthChecking ? "Test…" : "Tester la connexion"}
-              </button>
+                <button
+                  type="button"
+                  disabled={running || healthChecking}
+                  onClick={() => void testApiConnection()}
+                  className="rounded-md border border-emerald-800/60 bg-emerald-950/40 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-950/70 disabled:opacity-50"
+                >
+                  {healthChecking ? "Test…" : "Tester la connexion"}
+                </button>
+                <button
+                  type="button"
+                  disabled={modelsLoading || running}
+                  onClick={() => void refreshModels()}
+                  className="rounded-md border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  {modelsLoading ? "Modèles…" : "Rafraîchir modèles"}
+                </button>
+              </div>
             </div>
-            {normalizedApiBaseUrl !== apiBaseUrl.trim() ? (
-              <p className="text-xs text-amber-400/90">
-                URL utilisée :{" "}
-                <code className="font-mono">{normalizedApiBaseUrl}</code>
-                {llmProvider === "local" && apiBaseUrl.includes("/api/v1")
-                  ? " (corrigé : LM Studio attend /v1, pas /api/v1)"
-                  : null}
-              </p>
-            ) : null}
+            <div>
+              <p className="text-muted">Modèle (manager, experts, juge)</p>
+              <p className="mt-0.5 font-mono text-xs text-zinc-300">{manager.modelId}</p>
+            </div>
             {healthHint ? (
               <p
                 className={cn(
@@ -831,32 +727,20 @@ export default function EvalDashboardPage() {
                 {healthHint}
               </p>
             ) : null}
-            <label className="block text-sm">
-              <span className="text-muted">
-                Clé API
-                {llmProvider === "local"
-                  ? " (optionnel — Ollama / LM Studio)"
-                  : " (requise)"}
-              </span>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                disabled={running}
-                placeholder={llmProvider === "local" ? "lm-studio" : "sk-…"}
-                autoComplete="off"
-                className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs disabled:opacity-50"
-              />
-            </label>
+            {modelsFetchHint ? (
+              <p className="text-xs text-amber-400/90">{modelsFetchHint}</p>
+            ) : null}
             <p className="text-xs text-muted-subtle">
-              .env :{" "}
-              <code className="font-mono">BOARDROOM_EVAL_PROVIDER</code>,{" "}
-              <code className="font-mono">BOARDROOM_EVAL_BASE_URL</code>,{" "}
-              <code className="font-mono">BOARDROOM_EVAL_API_KEY</code>,{" "}
-              <code className="font-mono">BOARDROOM_EVAL_MODEL</code>
+              Experts{" "}
+              {expertsParallel ? "en parallèle (endpoint local)" : "séquentiels"}.
+              Modifiez connexion / modèle via{" "}
+              <Link href="/" className="underline underline-offset-2 hover:text-zinc-300">
+                Paramètres
+              </Link>
+              .
             </p>
           </div>
-        ) : null}
+        )}
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           <label className="block text-sm">
             <span className="text-muted">Nombre de cas</span>
@@ -883,84 +767,6 @@ export default function EvalDashboardPage() {
           </label>
         </div>
         <label className="mt-4 block text-sm">
-          <span className="text-muted">
-            Modèle (manager, experts, juge)
-          </span>
-          <div className="mt-1 flex flex-col gap-2 sm:flex-row">
-            <select
-              value={
-                evalModels.some((m) => m.id === modelId) ? modelId : "__custom__"
-              }
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v !== "__custom__") setModelId(v);
-              }}
-              disabled={modelsLoading || running}
-              className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs disabled:opacity-50"
-            >
-              {modelsLoading ? (
-                <option value={modelId}>Chargement…</option>
-              ) : (
-                <>
-                  {evalModels.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.id}
-                    </option>
-                  ))}
-                  {!evalModels.some((m) => m.id === modelId) && modelId ? (
-                    <option value="__custom__">{modelId} (personnalisé)</option>
-                  ) : null}
-                  <option value="__custom__">Autre (saisie ci-contre)</option>
-                </>
-              )}
-            </select>
-            <input
-              type="text"
-              value={modelId}
-              onChange={(e) => setModelId(e.target.value)}
-              disabled={running}
-              placeholder={
-                llmProvider === "local"
-                  ? "llama3.2"
-                  : llmProvider === "custom"
-                    ? "gpt-4o-mini"
-                    : "moonshotai/kimi-k2.6"
-              }
-              list="eval-llm-models"
-              className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs disabled:opacity-50"
-            />
-            <datalist id="eval-llm-models">
-              {evalModels.map((m) => (
-                <option key={m.id} value={m.id} />
-              ))}
-            </datalist>
-            <button
-              type="button"
-              onClick={() => void fetchEvalModels(true)}
-              disabled={modelsLoading || running}
-              className="shrink-0 rounded-lg border border-zinc-700 px-3 py-2 text-xs hover:bg-zinc-800 disabled:opacity-50"
-              title="Actualiser la liste des modèles"
-            >
-              {modelsLoading ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                "↻"
-              )}
-            </button>
-          </div>
-          {modelsFetchHint ? (
-            <p className="mt-1 text-xs text-amber-400/90">{modelsFetchHint}</p>
-          ) : (
-            <p className="mt-1 text-xs text-muted-subtle">
-              {llmProvider === "local"
-                ? "Eval : modèle rapide recommandé (ex. qwen3.5-9b). Thinking conservé. Experts en parallèle."
-                : llmProvider === "custom"
-                  ? "Toute API OpenAI-compatible : saisissez URL + clé, ou utilisez les raccourcis."
-                  : "Liste Nvidia NIM — défaut .env : NVIDIA_NIM_MODEL."}
-            </p>
-          )}
-        </label>
-        <label className="mt-4 block text-sm">
           <span className="text-muted">Baseline pour régression (optionnel)</span>
           <select
             value={baselineFile}
@@ -975,19 +781,13 @@ export default function EvalDashboardPage() {
             ))}
           </select>
         </label>
-        <label className="mt-4 block text-sm">
-          <span className="text-muted">
-            Surcharge prompt manager (vide = défaut app /{" "}
-            <code className="font-mono text-xs">BOARDROOM_MANAGER_PROMPT</code>)
-          </span>
-          <textarea
-            value={managerPromptDraft}
-            onChange={(e) => setManagerPromptDraft(e.target.value)}
-            rows={4}
-            placeholder="Collez ici une variante de prompt pour A/B test factuel…"
-            className="mt-1 w-full resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs leading-relaxed"
-          />
-        </label>
+        <p className="mt-4 text-xs text-muted-subtle">
+          Prompt manager : modifiez-le dans{" "}
+          <Link href="/" className="underline underline-offset-2 hover:text-zinc-300">
+            Paramètres → Manager
+          </Link>{" "}
+          (partagé avec le chat).
+        </p>
         <p className="mt-3 text-xs text-muted-subtle">
           Secret optionnel :{" "}
           <code className="font-mono">localStorage.boardroom_eval_secret</code> si{" "}
@@ -1045,7 +845,7 @@ export default function EvalDashboardPage() {
                 </div>
                 <p className="text-xs text-muted-subtle">
                   Pipeline par cas : équipe → experts
-                  {llmProvider === "local" ? " (parallèle)" : " (séquentiel)"} →
+                  {expertsParallel ? " (parallèle)" : " (séquentiel)"} →
                   synthèse → juge
                   {sleepMs > 0
                     ? ` · pause ${sleepMs} ms entre cas`
@@ -1163,7 +963,7 @@ export default function EvalDashboardPage() {
         <div className="mt-6 flex flex-wrap gap-3">
           <button
             type="button"
-            disabled={running}
+            disabled={running || !configReady}
             onClick={() => void runEvaluation()}
             className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
           >

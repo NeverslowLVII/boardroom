@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { prepareConnection } from "@/lib/boardroom-config";
 import { formatApiError } from "@/lib/utils";
 import type {
   ApiConnection,
@@ -18,7 +19,9 @@ export function resolveConnection(
   connectionId: string,
   connections: ApiConnection[]
 ): ApiConnection | null {
-  return connections.find((c) => c.id === connectionId) ?? null;
+  const conn = connections.find((c) => c.id === connectionId);
+  if (!conn) return null;
+  return prepareConnection(conn);
 }
 
 export function stripThinkingTags(text: string): string {

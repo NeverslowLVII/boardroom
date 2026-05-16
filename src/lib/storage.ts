@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import { BOARDROOM_MANAGER_DEFAULT_PROMPT } from "@/lib/eval/default-manager-prompt";
+import { BOARDROOM_MANAGER_DEFAULT_PROMPT } from "@/lib/boardroom-config";
 import type {
   ApiConnection,
   ManagerConfig,
