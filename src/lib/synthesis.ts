@@ -9,6 +9,9 @@ import type {
   TokenUsage,
 } from "@/types";
 
+/** Plafond de tokens générés (évite les réponses tronquées sur requêtes longues). */
+export const LLM_MAX_OUTPUT_TOKENS = 8192;
+
 const WEIGHT_LABELS: Record<number, string> = {
   1: "Consultatif",
   2: "Important",
@@ -123,16 +126,16 @@ export function buildSynthesisPrompt(
     })
     .join("\n\n---\n\n");
 
-  return `Le CEO a posé la question suivante :
+  return `L'utilisateur a formulé la demande suivante :
 "${userMessage}"
 
-Voici les mémos de tes employés :
+Voici les mémos des contributeurs :
 
 ${memos}
 
-Fais ta synthèse et présente ta réponse au CEO.
+Rédige ta synthèse complète et présente-la immédiatement à l'utilisateur (pas de promesse de revenir plus tard, pas de formule de service client).
 
-INSTRUCTION DYNAMIQUE : Analyse immédiatement le niveau d'accord entre les experts. S'ils sont unanimes sur la solution, IGNORE le format avec 'Désaccords' et 'Compromis'. Rédige à la place une réponse ultra-courte commençant par 'L'ÉQUIPE EST UNANIME' suivie du plan d'action direct.`;
+INSTRUCTION DYNAMIQUE : Analyse le niveau d'accord entre les contributeurs. S'ils sont unanimes sur la solution, privilégie une réponse courte et directe qui reprend fidèlement leurs solutions concrètes, sans section « Désaccords » ni « Compromis » superflue.`;
 }
 
 export async function completeManagerSynthesis(params: {
@@ -156,6 +159,7 @@ export async function completeManagerSynthesis(params: {
   const response = await client.chat.completions.create(
     {
       model: manager.modelId,
+      max_tokens: LLM_MAX_OUTPUT_TOKENS,
       messages: [
         { role: "system", content: manager.systemPrompt },
         ...conversationHistory.map((m) => ({

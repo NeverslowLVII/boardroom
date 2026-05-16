@@ -35,8 +35,17 @@ export interface EvalReportCaseMemo {
   content: string;
 }
 
+export interface EvalReportCasePrompt {
+  name: string;
+  systemPrompt: string;
+}
+
 export interface EvalReportCase {
   user_query?: string;
+  team_proposal_prompt?: string;
+  synthesis_prompt?: string;
+  manager_system_prompt?: string;
+  expert_prompts?: EvalReportCasePrompt[];
   expert_memos?: EvalReportCaseMemo[];
   manager_response?: string;
   stress_profile_id?: string;

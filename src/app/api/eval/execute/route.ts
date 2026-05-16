@@ -7,7 +7,13 @@ import {
   loadStressMatrix,
   buildDeterministicUserMessage,
   pickProfilesForRun,
+  type StressProfileRow,
 } from "@/lib/eval/stress-matrix";
+import {
+  DEFAULT_DATASET_PATH,
+  loadWildchatQueries,
+  sampleWildchatQueries,
+} from "@/lib/eval/wildchat-dataset";
 import { runBoardroomEvalCase } from "@/lib/eval/run-boardroom-case";
 import { runJudge, type JudgeScores } from "@/lib/eval/judge";
 import { aggregateJudgeScores } from "@/lib/eval/aggregate-scores";
@@ -30,6 +36,10 @@ const SAFE_REPORT = /^[a-zA-Z0-9._-]+\.report\.json$/;
 interface ExecuteBody {
   count?: number;
   sleepMs?: number;
+  /** Requêtes WildChat (scripts/data/real_queries.jsonl). Défaut : matrice de stress. */
+  useDataset?: boolean;
+  /** true = requêtes utilisateur synthétiques (stress_matrix.json) */
+  useStressMatrix?: boolean;
   /** Même payload que le chat (Paramètres). Prioritaire sur provider/baseUrl/.env */
   manager?: ManagerConfig;
   connections?: ApiConnection[];
@@ -41,6 +51,54 @@ interface ExecuteBody {
   managerSystemPrompt?: string;
   /** Rapport précédent (basename) pour comparaison chiffrée des agrégats */
   baselineReport?: string | null;
+}
+
+interface EvalRunCase {
+  profileId: string;
+  domain?: string;
+  userMessage: string;
+}
+
+async function buildEvalRunCases(
+  count: number,
+  body: ExecuteBody
+): Promise<{
+  cases: EvalRunCase[];
+  stressMatrix: boolean;
+  stressMatrixVersion?: number;
+  datasetPath?: string;
+  deterministic: boolean;
+}> {
+  const useStress =
+    body.useStressMatrix === true ||
+    (body.useDataset !== true && body.useStressMatrix !== false);
+
+  if (!useStress) {
+    const queries = await loadWildchatQueries(DEFAULT_DATASET_PATH);
+    const sampled = sampleWildchatQueries(queries, count);
+    return {
+      cases: sampled.map((userMessage, i) => ({
+        profileId: `wildchat-${i + 1}`,
+        userMessage,
+      })),
+      stressMatrix: false,
+      datasetPath: DEFAULT_DATASET_PATH,
+      deterministic: false,
+    };
+  }
+
+  const matrix = await loadStressMatrix();
+  const profiles = pickProfilesForRun(matrix.profiles, count);
+  return {
+    cases: profiles.map((profile: StressProfileRow) => ({
+      profileId: profile.id,
+      domain: profile.domain,
+      userMessage: buildDeterministicUserMessage(profile),
+    })),
+    stressMatrix: true,
+    stressMatrixVersion: matrix.version,
+    deterministic: true,
+  };
 }
 
 async function loadBaselineAgg(
@@ -116,8 +174,8 @@ export async function POST(request: NextRequest) {
       baseline = null;
     }
 
-    const matrix = await loadStressMatrix();
-    const profiles = pickProfilesForRun(matrix.profiles, count);
+    const runPlan = await buildEvalRunCases(count, body);
+    const { cases: runCases } = runPlan;
 
     const abortSignal = request.signal;
     const encoder = new TextEncoder();
@@ -137,6 +195,10 @@ export async function POST(request: NextRequest) {
         type CaseRow = {
           user_query: string;
           stress_profile_id: string;
+          team_proposal_prompt?: string;
+          synthesis_prompt?: string;
+          manager_system_prompt?: string;
+          expert_prompts?: { name: string; systemPrompt: string }[];
           expert_memos: { employee: string; content: string }[];
           manager_response: string;
           proposed_team?: { name: string; icon: string }[];
@@ -178,9 +240,10 @@ export async function POST(request: NextRequest) {
             generated_at: new Date().toISOString(),
             mode: "pipeline",
             source: "eval_ui",
-            deterministic: true,
-            stress_matrix: true,
-            stress_matrix_version: matrix.version,
+            deterministic: runPlan.deterministic,
+            stress_matrix: runPlan.stressMatrix,
+            stress_matrix_version: runPlan.stressMatrixVersion,
+            dataset_path: runPlan.datasetPath,
             model: llm.model,
             llm_provider: llm.provider,
             llm_base_url: llm.baseUrl,
@@ -206,9 +269,11 @@ export async function POST(request: NextRequest) {
         try {
           send({
             type: "start",
-            total: profiles.length,
-            deterministic: true,
-            stressMatrixVersion: matrix.version,
+            total: runCases.length,
+            deterministic: runPlan.deterministic,
+            stressMatrix: runPlan.stressMatrix,
+            stressMatrixVersion: runPlan.stressMatrixVersion,
+            datasetPath: runPlan.datasetPath,
             judgeModel: llm.model,
             llmProvider: llm.provider,
             llmBaseUrl: llm.baseUrl,
@@ -217,29 +282,30 @@ export async function POST(request: NextRequest) {
               : null,
           });
 
-          for (let i = 0; i < profiles.length; i++) {
+          for (let i = 0; i < runCases.length; i++) {
             throwIfAborted(abortSignal);
-            const profile = profiles[i];
+            const runCase = runCases[i];
             if (sleepMs > 0 && i > 0) {
               send({
                 type: "case_phase",
                 index: i + 1,
-                total: profiles.length,
-                profileId: profile.id,
+                total: runCases.length,
+                profileId: runCase.profileId,
                 phase: "sleep",
                 sleepMs,
               });
               await sleepInterruptible(sleepMs, abortSignal);
             }
 
-            const userMessage = buildDeterministicUserMessage(profile);
+            const userMessage = runCase.userMessage;
 
             send({
               type: "case_start",
               index: i + 1,
-              total: profiles.length,
-              profileId: profile.id,
-              domain: profile.domain,
+              total: runCases.length,
+              profileId: runCase.profileId,
+              domain: runCase.domain,
+              userQuery: userMessage,
               queryPreview: userMessage.split("\n")[0]?.slice(0, 120) ?? "",
             });
 
@@ -256,8 +322,8 @@ export async function POST(request: NextRequest) {
                   send({
                     type: "case_phase",
                     index: i + 1,
-                    total: profiles.length,
-                    profileId: profile.id,
+                    total: runCases.length,
+                    profileId: runCase.profileId,
                     phase,
                     expertName: detail?.expertName,
                     expertIndex: detail?.expertIndex,
@@ -266,11 +332,24 @@ export async function POST(request: NextRequest) {
                 },
               });
 
+              const synthesisLen = pipeline.managerResponse.trim().length;
+              if (synthesisLen === 0) {
+                const diag = `Synthèse vide (requête ${userMessage.length} car., ${pipeline.memos.length} mémo(s)) — fenêtre de contexte ou erreur API ?`;
+                send({
+                  type: "case_log",
+                  index: i + 1,
+                  profileId: runCase.profileId,
+                  level: "warn",
+                  message: diag,
+                });
+                throw new Error(diag);
+              }
+
               send({
                 type: "case_phase",
                 index: i + 1,
-                total: profiles.length,
-                profileId: profile.id,
+                total: runCases.length,
+                profileId: runCase.profileId,
                 phase: "judge",
               });
 
@@ -284,7 +363,11 @@ export async function POST(request: NextRequest) {
 
               casesBuf.push({
                 user_query: userMessage,
-                stress_profile_id: profile.id,
+                stress_profile_id: runCase.profileId,
+                team_proposal_prompt: pipeline.teamProposalPrompt,
+                synthesis_prompt: pipeline.synthesisPrompt,
+                manager_system_prompt: pipeline.managerSystemPrompt,
+                expert_prompts: pipeline.expertPrompts,
                 expert_memos,
                 manager_response: pipeline.managerResponse,
                 proposed_team: pipeline.team.map((t) => ({
@@ -308,7 +391,7 @@ export async function POST(request: NextRequest) {
 
               resultsBuf.push({
                 case_index: i + 1,
-                stress_profile_id: profile.id,
+                stress_profile_id: runCase.profileId,
                 scores: {
                   omission_critique: judgeOut.omission_critique,
                   hallucination_produit: judgeOut.hallucination_produit,
@@ -322,7 +405,7 @@ export async function POST(request: NextRequest) {
                 send({
                   type: "case_log",
                   index: i + 1,
-                  profileId: profile.id,
+                  profileId: runCase.profileId,
                   level: "warn",
                   message:
                     "Équipe par défaut (le modèle n'a pas renvoyé de JSON valide). Scores juge toujours calculés.",
@@ -332,7 +415,12 @@ export async function POST(request: NextRequest) {
               send({
                 type: "case_done",
                 index: i + 1,
-                profileId: profile.id,
+                profileId: runCase.profileId,
+                userQuery: userMessage,
+                teamProposalPrompt: pipeline.teamProposalPrompt,
+                synthesisPrompt: pipeline.synthesisPrompt,
+                managerSystemPrompt: pipeline.managerSystemPrompt,
+                expertPrompts: pipeline.expertPrompts,
                 team: pipeline.team.map((t) => t.name),
                 teamFallback: pipeline.teamFallback ?? false,
                 scores: {
@@ -347,20 +435,20 @@ export async function POST(request: NextRequest) {
               const msg = formatApiError(err);
               casesBuf.push({
                 user_query: userMessage,
-                stress_profile_id: profile.id,
+                stress_profile_id: runCase.profileId,
                 expert_memos: [],
                 manager_response: "",
               });
               resultsBuf.push({
                 case_index: i + 1,
-                stress_profile_id: profile.id,
+                stress_profile_id: runCase.profileId,
                 scores: null,
                 error: msg,
               });
               send({
                 type: "case_error",
                 index: i + 1,
-                profileId: profile.id,
+                profileId: runCase.profileId,
                 error: msg,
               });
             }

@@ -46,7 +46,7 @@ function DownloadMessageButton({ content, timestamp }: { content: string; timest
     <button
       onClick={handleDownload}
       className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
-      title="Télécharger uniquement la synthèse du Manager"
+      title="Télécharger uniquement la synthèse"
     >
       <Download className="h-3.5 w-3.5" />
       Décision
@@ -142,7 +142,7 @@ export function ChatBubble({ message, overrides, onOverrideChange, onRetry, isLa
           {/* Label + timestamp */}
           <div className={cn("mb-1 flex items-center gap-2", isUser && "flex-row-reverse")}>
             <span className="text-sm font-semibold text-zinc-200">
-              {isUser ? "CEO" : "Manager"}
+              {isUser ? "Utilisateur" : "Synthèse"}
             </span>
             <span className="text-xs text-zinc-400">
               {timeAgo(message.timestamp)}

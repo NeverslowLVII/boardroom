@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "eval": "node scripts/run-eval.cjs"
+    "eval": "node scripts/run-eval.cjs",
+    "fetch-wild": "py -3 scripts/fetch_wild_dataset.py"
   },
   "dependencies": {
     "clsx": "^2.1.1",

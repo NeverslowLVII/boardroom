@@ -4,6 +4,7 @@ import {
   buildSynthesisPrompt,
   extractUsage,
   formatApiError,
+  LLM_MAX_OUTPUT_TOKENS,
   resolveConnection,
   sumTokenUsage,
 } from "@/lib/synthesis";
@@ -85,6 +86,7 @@ export async function POST(request: NextRequest) {
 
     const stream = await managerClient.chat.completions.create({
       model: manager.modelId,
+      max_tokens: LLM_MAX_OUTPUT_TOKENS,
       stream: true,
       stream_options: { include_usage: true },
       messages: [

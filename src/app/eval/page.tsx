@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   EvalCaseResult,
   EvalReport,
@@ -61,7 +68,15 @@ interface RunLogEntry {
   text: string;
 }
 
-interface LiveCaseRow {
+interface CasePromptBundle {
+  userQuery?: string;
+  teamProposalPrompt?: string;
+  synthesisPrompt?: string;
+  managerSystemPrompt?: string;
+  expertPrompts?: { name: string; systemPrompt: string }[];
+}
+
+interface LiveCaseRow extends CasePromptBundle {
   index: number;
   profileId: string;
   team?: string[];
@@ -74,6 +89,81 @@ interface LiveCaseRow {
   justification?: string;
 }
 
+function PromptBlock({
+  label,
+  content,
+  defaultOpen = false,
+}: {
+  label: string;
+  content?: string | null;
+  defaultOpen?: boolean;
+}) {
+  if (!content?.trim()) return null;
+  return (
+    <details
+      open={defaultOpen}
+      className="rounded-lg border border-zinc-800 bg-zinc-950/70"
+    >
+      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-zinc-400 hover:text-zinc-200">
+        {label}
+      </summary>
+      <pre className="max-h-80 overflow-auto whitespace-pre-wrap border-t border-zinc-800 px-3 py-2 text-xs leading-relaxed text-zinc-300">
+        {content}
+      </pre>
+    </details>
+  );
+}
+
+function CasePromptsPanel({
+  profileId,
+  prompts,
+  defaultOpenUser = false,
+}: {
+  profileId?: string;
+  prompts: CasePromptBundle;
+  defaultOpenUser?: boolean;
+}) {
+  const hasAny =
+    prompts.userQuery ||
+    prompts.teamProposalPrompt ||
+    prompts.synthesisPrompt ||
+    prompts.managerSystemPrompt ||
+    (prompts.expertPrompts?.length ?? 0) > 0;
+  if (!hasAny) return null;
+
+  return (
+    <div className="space-y-2">
+      {profileId ? (
+        <p className="font-mono text-xs text-muted">{profileId}</p>
+      ) : null}
+      <PromptBlock
+        label="Requête utilisateur (message envoyé)"
+        content={prompts.userQuery}
+        defaultOpen={defaultOpenUser}
+      />
+      <PromptBlock
+        label="Prompt composition d'équipe (assistant)"
+        content={prompts.teamProposalPrompt}
+      />
+      {prompts.expertPrompts?.map((ex) => (
+        <PromptBlock
+          key={ex.name}
+          label={`Expert — ${ex.name} (system)`}
+          content={ex.systemPrompt}
+        />
+      ))}
+      <PromptBlock
+        label="System prompt assistant de synthèse (Paramètres)"
+        content={prompts.managerSystemPrompt}
+      />
+      <PromptBlock
+        label="Prompt synthèse (message utilisateur au modèle)"
+        content={prompts.synthesisPrompt}
+      />
+    </div>
+  );
+}
+
 let runLogSeq = 0;
 
 function phaseLabel(p: RunProgressState): string {
@@ -81,11 +171,11 @@ function phaseLabel(p: RunProgressState): string {
     case "sleep":
       return `Pause entre cas (${p.sleepMs ?? "…"} ms)`;
     case "team":
-      return "Composition de l'équipe (manager)";
+      return "Composition de l'équipe (assistant)";
     case "expert":
       return `Expert ${p.expertName ?? "…"} (${p.expertIndex ?? "?"}/${p.expertTotal ?? "?"})`;
     case "synthesis":
-      return "Synthèse manager";
+      return "Synthèse";
     case "judge":
       return "Notation juge LLM";
     default:
@@ -178,6 +268,10 @@ export default function EvalDashboardPage() {
   const [runMeta, setRunMeta] = useState<RunMetaState | null>(null);
   const [runLog, setRunLog] = useState<RunLogEntry[]>([]);
   const [liveCases, setLiveCases] = useState<LiveCaseRow[]>([]);
+  const [currentCasePrompts, setCurrentCasePrompts] = useState<
+    (CasePromptBundle & { profileId?: string }) | null
+  >(null);
+  const [expandedLiveCase, setExpandedLiveCase] = useState<number | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const runAbortRef = useRef<AbortController | null>(null);
 
@@ -197,11 +291,14 @@ export default function EvalDashboardPage() {
   );
   const [execCount, setExecCount] = useState(10);
   const [sleepMs, setSleepMs] = useState(5000);
+  const [useDataset, setUseDataset] = useState(true);
   const [baselineFile, setBaselineFile] = useState("");
-  const [settings, setSettings] = useState<BoardroomSettings>(() =>
-    loadBoardroomSettings()
-  );
-  const [models, setModels] = useState<FetchedModel[]>(() => loadModelsCache());
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const [settings, setSettings] = useState<BoardroomSettings>(() => ({
+    manager: { connectionId: "", modelId: "", systemPrompt: "" },
+    connections: [],
+  }));
+  const [models, setModels] = useState<FetchedModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsFetchHint, setModelsFetchHint] = useState<string | null>(null);
   const [healthChecking, setHealthChecking] = useState(false);
@@ -306,6 +403,8 @@ export default function EvalDashboardPage() {
     setRunMeta(null);
     setRunLog([]);
     setLiveCases([]);
+    setCurrentCasePrompts(null);
+    setExpandedLiveCase(null);
     const { manager: managerSnapshot, connections: connectionsSnapshot } =
       loadBoardroomSettings();
     const conn = getManagerConnection({
@@ -314,7 +413,7 @@ export default function EvalDashboardPage() {
     });
     if (!isSettingsReady({ manager: managerSnapshot, connections: connectionsSnapshot })) {
       setRunError(
-        "Configurez une connexion API et le modèle du manager dans Paramètres (page chat)."
+        "Configurez une connexion API et le modèle de l'assistant de synthèse dans Paramètres (page chat)."
       );
       setRunning(false);
       return;
@@ -342,6 +441,8 @@ export default function EvalDashboardPage() {
         body: JSON.stringify({
           count: execCount,
           sleepMs,
+          useDataset,
+          useStressMatrix: !useDataset,
           manager: managerSnapshot,
           connections: connectionsSnapshot,
           baselineReport: baselineFile.trim() || undefined,
@@ -417,6 +518,7 @@ export default function EvalDashboardPage() {
             const total = num(ev.total) ?? 0;
             const profileId = str(ev.profileId) ?? "?";
             const domain = str(ev.domain);
+            const userQuery = str(ev.userQuery);
             setRunProgress({
               cur: index,
               total,
@@ -424,6 +526,13 @@ export default function EvalDashboardPage() {
               domain,
               phase: "team",
             });
+            if (userQuery) {
+              setCurrentCasePrompts({ profileId, userQuery });
+              setLiveCases((prev) => [
+                ...prev.filter((c) => c.index !== index),
+                { index, profileId, userQuery },
+              ]);
+            }
             appendRunLog(
               "info",
               `Cas ${index}/${total} — ${profileId}${domain ? ` (${domain})` : ""}`
@@ -459,7 +568,7 @@ export default function EvalDashboardPage() {
                 `  → Expert ${str(ev.expertName)} (${num(ev.expertIndex)}/${num(ev.expertTotal)})`
               );
             } else if (phase === "synthesis") {
-              appendRunLog("info", "  → Synthèse manager…");
+              appendRunLog("info", "  → Synthèse…");
             } else if (phase === "judge") {
               appendRunLog("info", "  → Juge LLM…");
             }
@@ -480,9 +589,40 @@ export default function EvalDashboardPage() {
             const scores = ev.scores as LiveCaseRow["scores"] | undefined;
             const justification = str(ev.justification);
             const teamFallback = ev.teamFallback === true;
+            const userQuery = str(ev.userQuery);
+            const teamProposalPrompt = str(ev.teamProposalPrompt);
+            const synthesisPrompt = str(ev.synthesisPrompt);
+            const managerSystemPrompt = str(ev.managerSystemPrompt);
+            const expertPrompts = Array.isArray(ev.expertPrompts)
+              ? (ev.expertPrompts as { name?: string; systemPrompt?: string }[])
+                  .filter(
+                    (x) =>
+                      typeof x?.name === "string" &&
+                      typeof x?.systemPrompt === "string"
+                  )
+                  .map((x) => ({
+                    name: x.name as string,
+                    systemPrompt: x.systemPrompt as string,
+                  }))
+              : undefined;
+            const promptBundle: CasePromptBundle = {
+              userQuery,
+              teamProposalPrompt,
+              synthesisPrompt,
+              managerSystemPrompt,
+              expertPrompts,
+            };
+            setCurrentCasePrompts({ profileId, ...promptBundle });
             setLiveCases((prev) => [
               ...prev.filter((c) => c.index !== index),
-              { index, profileId, team, scores, justification },
+              {
+                index,
+                profileId,
+                team,
+                scores,
+                justification,
+                ...promptBundle,
+              },
             ]);
             if (scores) {
               const o = scores.omission_critique;
@@ -569,6 +709,7 @@ export default function EvalDashboardPage() {
     execCount,
     fetchDevReports,
     sleepMs,
+    useDataset,
   ]);
 
   const testApiConnection = useCallback(async () => {
@@ -599,7 +740,7 @@ export default function EvalDashboardPage() {
       setModels(list);
       const errForConn = errors.find((e) => e.connectionId === mgr.connectionId);
       if (errForConn) {
-        setModelsFetchHint(`Connexion manager : ${errForConn.error}`);
+        setModelsFetchHint(`Connexion synthèse : ${errForConn.error}`);
       }
     } catch {
       setModelsFetchHint("Impossible de joindre l'API modèles.");
@@ -610,6 +751,8 @@ export default function EvalDashboardPage() {
 
   useEffect(() => {
     refreshBoardroomSettings();
+    setModels(loadModelsCache());
+    setSettingsHydrated(true);
     void fetchDevReports();
   }, [fetchDevReports, refreshBoardroomSettings]);
 
@@ -637,7 +780,7 @@ export default function EvalDashboardPage() {
             (même scénarios à chaque fois) ou importez un rapport. Les scores
             reflètent le juge LLM&nbsp;: baisse des omissions / hallucinations et
             hausse du respect des contraintes = mieux. Pour comparer deux versions
-            du prompt manager, enregistrez un rapport baseline puis relancez avec
+            du prompt de synthèse, enregistrez un rapport baseline puis relancez avec
             le prompt modifié.
           </p>
         </div>
@@ -656,14 +799,35 @@ export default function EvalDashboardPage() {
         <p className="mt-2 text-sm text-muted">
           Utilise les mêmes{" "}
           <strong className="font-medium text-zinc-300">connexions API</strong> et le{" "}
-          <strong className="font-medium text-zinc-300">modèle manager</strong> que le chat
-          (Paramètres sur la page principale). Matrice{" "}
-          <code className="font-mono text-xs text-zinc-400">scripts/stress_matrix.json</code>
-          .
+          <strong className="font-medium text-zinc-300">modèle de synthèse</strong> que le chat
+          (Paramètres sur la page principale). Par défaut : requêtes WildChat{" "}
+          <code className="font-mono text-xs text-zinc-400">
+            scripts/data/real_queries.jsonl
+          </code>
+          ; option matrice de stress synthétique.
         </p>
-        {!configReady ? (
+        <label className="mt-4 flex cursor-pointer items-start gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={useDataset}
+            onChange={(e) => setUseDataset(e.target.checked)}
+            disabled={running}
+            className="mt-0.5 rounded border-zinc-600"
+          />
+          <span>
+            <span className="font-medium text-zinc-200">Dataset WildChat</span>
+            <span className="mt-0.5 block text-muted">
+              {useDataset
+                ? "Tirage aléatoire dans real_queries.jsonl (comme evaluate_boardroom.py)."
+                : "Scénarios utilisateur de scripts/stress_matrix.json (profils mélangés à chaque run)."}
+            </span>
+          </span>
+        </label>
+        {!settingsHydrated ? (
+          <p className="mt-4 text-sm text-muted">Chargement de la configuration…</p>
+        ) : !configReady ? (
           <p className="mt-4 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-200/90">
-            Configurez au moins une connexion (URL + clé) et le modèle du manager dans{" "}
+            Configurez au moins une connexion (URL + clé) et le modèle de synthèse dans{" "}
             <Link
               href="/"
               className="font-medium underline underline-offset-2 hover:text-amber-100"
@@ -676,7 +840,7 @@ export default function EvalDashboardPage() {
           <div className="mt-4 space-y-3 rounded-lg border border-zinc-800 bg-zinc-950/50 p-3 text-sm">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <p className="text-muted">Connexion manager</p>
+                <p className="text-muted">Connexion (assistant de synthèse)</p>
                 <p className="mt-0.5 font-medium text-zinc-200">
                   {activeConnection?.name ?? "—"}
                 </p>
@@ -712,7 +876,7 @@ export default function EvalDashboardPage() {
               </div>
             </div>
             <div>
-              <p className="text-muted">Modèle (manager, experts, juge)</p>
+              <p className="text-muted">Modèle (synthèse, contributeurs, juge)</p>
               <p className="mt-0.5 font-mono text-xs text-zinc-300">{manager.modelId}</p>
             </div>
             {healthHint ? (
@@ -782,9 +946,9 @@ export default function EvalDashboardPage() {
           </select>
         </label>
         <p className="mt-4 text-xs text-muted-subtle">
-          Prompt manager : modifiez-le dans{" "}
+          Prompt de synthèse : modifiez-le dans{" "}
           <Link href="/" className="underline underline-offset-2 hover:text-zinc-300">
-            Paramètres → Manager
+            Paramètres → Synthèse
           </Link>{" "}
           (partagé avec le chat).
         </p>
@@ -851,6 +1015,18 @@ export default function EvalDashboardPage() {
                     ? ` · pause ${sleepMs} ms entre cas`
                     : ""}
                 </p>
+                {currentCasePrompts ? (
+                  <div className="mt-4 space-y-2 border-t border-zinc-800 pt-4">
+                    <p className="text-xs font-medium text-zinc-300">
+                      Prompts du cas en cours
+                    </p>
+                    <CasePromptsPanel
+                      profileId={currentCasePrompts.profileId}
+                      prompts={currentCasePrompts}
+                      defaultOpenUser
+                    />
+                  </div>
+                ) : null}
               </div>
             ) : running ? (
               <p className="flex items-center gap-2 text-sm text-zinc-400">
@@ -863,6 +1039,7 @@ export default function EvalDashboardPage() {
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="border-b border-zinc-800 text-muted">
+                      <th className="w-8 py-1.5 pr-1 font-medium" />
                       <th className="py-1.5 pr-2 font-medium">#</th>
                       <th className="py-1.5 pr-2 font-medium">Profil</th>
                       <th className="py-1.5 pr-2 font-medium">Scores</th>
@@ -872,60 +1049,101 @@ export default function EvalDashboardPage() {
                   <tbody>
                     {[...liveCases]
                       .sort((a, b) => a.index - b.index)
-                      .map((c) => (
-                        <tr
-                          key={c.index}
-                          className="border-b border-zinc-800/60"
-                        >
-                          <td className="py-1.5 pr-2 tabular-nums">{c.index}</td>
-                          <td className="py-1.5 pr-2 font-mono">{c.profileId}</td>
-                          <td className="py-1.5 pr-2">
-                            {c.error ? (
-                              <span
-                                className="block max-w-xs text-red-400"
-                                title={c.error}
-                              >
-                                {c.error.length > 72
-                                  ? `${c.error.slice(0, 72)}…`
-                                  : c.error}
-                              </span>
-                            ) : c.scores ? (
-                              <span className="flex flex-wrap gap-1.5">
-                                {[
-                                  scoreChip("O", c.scores.omission_critique, 0),
-                                  scoreChip(
-                                    "H",
-                                    c.scores.hallucination_produit,
-                                    0
-                                  ),
-                                  scoreChip(
-                                    "R",
-                                    c.scores.respect_contrainte,
-                                    1
-                                  ),
-                                ].map((s) => (
-                                  <span
-                                    key={s.label}
-                                    className={cn(
-                                      "rounded px-1 py-0.5 font-mono",
-                                      s.ok
-                                        ? "bg-emerald-950/60 text-emerald-400"
-                                        : "bg-amber-950/60 text-amber-400"
-                                    )}
+                      .map((c) => {
+                        const open = expandedLiveCase === c.index;
+                        const hasPrompts =
+                          c.userQuery ||
+                          c.teamProposalPrompt ||
+                          c.synthesisPrompt;
+                        return (
+                          <Fragment key={c.index}>
+                            <tr className="border-b border-zinc-800/60">
+                              <td className="py-1.5 pr-1">
+                                {hasPrompts ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setExpandedLiveCase(open ? null : c.index)
+                                    }
+                                    className="rounded p-0.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                                    aria-label={
+                                      open ? "Masquer les prompts" : "Voir les prompts"
+                                    }
                                   >
-                                    {s.label}
+                                    {open ? (
+                                      <ChevronDown className="size-3.5" />
+                                    ) : (
+                                      <ChevronRight className="size-3.5" />
+                                    )}
+                                  </button>
+                                ) : null}
+                              </td>
+                              <td className="py-1.5 pr-2 tabular-nums">
+                                {c.index}
+                              </td>
+                              <td className="py-1.5 pr-2 font-mono">
+                                {c.profileId}
+                              </td>
+                              <td className="py-1.5 pr-2">
+                                {c.error ? (
+                                  <span
+                                    className="block max-w-xs text-red-400"
+                                    title={c.error}
+                                  >
+                                    {c.error.length > 72
+                                      ? `${c.error.slice(0, 72)}…`
+                                      : c.error}
                                   </span>
-                                ))}
-                              </span>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td className="max-w-[12rem] truncate py-1.5 text-muted">
-                            {c.team?.join(", ") ?? "—"}
-                          </td>
-                        </tr>
-                      ))}
+                                ) : c.scores ? (
+                                  <span className="flex flex-wrap gap-1.5">
+                                    {[
+                                      scoreChip(
+                                        "O",
+                                        c.scores.omission_critique,
+                                        0
+                                      ),
+                                      scoreChip(
+                                        "H",
+                                        c.scores.hallucination_produit,
+                                        0
+                                      ),
+                                      scoreChip(
+                                        "R",
+                                        c.scores.respect_contrainte,
+                                        1
+                                      ),
+                                    ].map((s) => (
+                                      <span
+                                        key={s.label}
+                                        className={cn(
+                                          "rounded px-1 py-0.5 font-mono",
+                                          s.ok
+                                            ? "bg-emerald-950/60 text-emerald-400"
+                                            : "bg-amber-950/60 text-amber-400"
+                                        )}
+                                      >
+                                        {s.label}
+                                      </span>
+                                    ))}
+                                  </span>
+                                ) : (
+                                  "—"
+                                )}
+                              </td>
+                              <td className="max-w-48 truncate py-1.5 text-muted">
+                                {c.team?.join(", ") ?? "—"}
+                              </td>
+                            </tr>
+                            {open && hasPrompts ? (
+                              <tr className="border-b border-zinc-800/60 bg-zinc-950/40">
+                                <td colSpan={5} className="px-2 py-3">
+                                  <CasePromptsPanel prompts={c} />
+                                </td>
+                              </tr>
+                            ) : null}
+                          </Fragment>
+                        );
+                      })}
                   </tbody>
                 </table>
               </div>
@@ -963,7 +1181,7 @@ export default function EvalDashboardPage() {
         <div className="mt-6 flex flex-wrap gap-3">
           <button
             type="button"
-            disabled={running || !configReady}
+            disabled={running || !settingsHydrated || !configReady}
             onClick={() => void runEvaluation()}
             className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:opacity-40"
           >
@@ -1252,14 +1470,17 @@ export default function EvalDashboardPage() {
                         ) : null}
                         {cas ? (
                           <>
-                            <div>
-                              <p className="text-xs font-medium text-muted">
-                                Requête CEO
-                              </p>
-                              <p className="mt-1 whitespace-pre-wrap text-sm">
-                                {cas.user_query ?? "—"}
-                              </p>
-                            </div>
+                            <CasePromptsPanel
+                              profileId={stressId ?? undefined}
+                              prompts={{
+                                userQuery: cas.user_query,
+                                teamProposalPrompt: cas.team_proposal_prompt,
+                                synthesisPrompt: cas.synthesis_prompt,
+                                managerSystemPrompt: cas.manager_system_prompt,
+                                expertPrompts: cas.expert_prompts,
+                              }}
+                              defaultOpenUser
+                            />
                             {cas.expert_memos && cas.expert_memos.length > 0 ? (
                               <div>
                                 <p className="text-xs font-medium text-muted">
@@ -1285,7 +1506,7 @@ export default function EvalDashboardPage() {
                             {cas.manager_response ? (
                               <div>
                                 <p className="text-xs font-medium text-muted">
-                                  Réponse manager
+                                  Réponse de synthèse
                                 </p>
                                 <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-zinc-800 bg-zinc-950 p-3 text-xs leading-relaxed">
                                   {cas.manager_response}

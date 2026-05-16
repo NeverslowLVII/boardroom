@@ -19,7 +19,7 @@ export interface EvalSynthesizePayload {
   employees: EmployeeConfig[];
   manager: ManagerConfig;
   connections: ApiConnection[];
-  /** Historique optionnel (tours précédents, sans le message CEO courant). */
+  /** Historique optionnel (tours précédents, sans le message utilisateur courant). */
   messages?: { role: "user" | "assistant"; content: string }[];
 }
 
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     const managerConn = resolveConnection(manager.connectionId, connections);
     if (!managerConn) {
       return Response.json(
-        { error: "Connexion du Manager introuvable." },
+        { error: "Connexion de l'assistant de synthèse introuvable." },
         { status: 400 }
       );
     }

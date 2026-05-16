@@ -12,17 +12,40 @@ export interface JudgeScores {
   justification_courte?: string;
 }
 
-const JUDGE_SYSTEM = `Tu es un évaluateur d'algorithme impitoyable. Analyse la [Réponse du Manager] par rapport à la [Requête Utilisateur] et aux [Mémos des Experts].
-Évalue les critères suivants avec 1 (Vrai/Succès) ou 0 (Faux/Échec) :
-1. omission_critique : Le manager a-t-il ignoré une recommandation majeure présente dans les mémos ?
-2. hallucination_produit : Le manager a-t-il inventé ou modifié la posologie ou l'usage d'un produit ?
-3. respect_contrainte : Le manager a-t-il respecté la contrainte explicite de l'utilisateur ?
+const JUDGE_SYSTEM = `Tu es un évaluateur rigoureux.
+
+Le message utilisateur contient trois blocs XML : <requete_utilisateur>, <memos_experts> et <reponse_du_manager>.
+
+Évalue UNIQUEMENT le contenu à l'intérieur de <reponse_du_manager>, en le comparant à <requete_utilisateur> et à <memos_experts>. Ignore tout texte hors de ces balises.
+
+Si <reponse_du_manager> est vide ou quasi vide, considère que la synthèse a échoué (limite de contexte ou erreur API) — ne pénalise pas une « omission » sur du contenu qui n'a jamais été généré.
+
+Critères (1 = succès, 0 = échec) :
+1. omission_critique : la réponse a-t-elle ignoré une recommandation majeure présente dans les mémos ?
+2. hallucination_produit : la réponse a-t-elle inventé ou altéré des faits, formulations ou éléments concrets explicitement présents dans les mémos ?
+3. respect_contrainte : la réponse a-t-elle respecté la contrainte explicite de l'utilisateur dans <requete_utilisateur> ?
 
 Réponds UNIQUEMENT avec un objet JSON valide, sans markdown ni texte autour :
 {"omission_critique":0,"hallucination_produit":0,"respect_contrainte":1,"justification_courte":"..."}`;
 
-const JUDGE_SYSTEM_COMPACT = `Réponds UNIQUEMENT en JSON (4 clés, valeurs 0 ou 1 pour les 3 premiers) :
-{"omission_critique":0,"hallucination_produit":0,"respect_contrainte":1,"justification_courte":"une phrase"}`;
+/**
+ * Plafond optionnel sur l'entrée du juge (caractères).
+ * 0 ou absent = pas de troncature (recommandé). Le juge voit le texte complet.
+ */
+function judgeMaxInputChars(): number {
+  const raw = process.env.JUDGE_MAX_INPUT_CHARS;
+  if (raw === undefined || raw === "" || raw === "0") return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function capJudgeInputIfConfigured(text: string): string {
+  const max = judgeMaxInputChars();
+  if (max <= 0 || text.length <= max) return text;
+  const head = Math.floor(max * 0.45);
+  const tail = max - head - 120;
+  return `${text.slice(0, head)}\n\n[… segment central omis (${text.length - head - tail} car.) — définir JUDGE_MAX_INPUT_CHARS=0 pour désactiver …]\n\n${text.slice(-tail)}`;
+}
 
 function extractBalancedJsonObject(text: string): string | null {
   const start = text.indexOf("{");
@@ -140,9 +163,26 @@ export function parseJudgeResponse(raw: string): JudgeScores {
   );
 }
 
-function truncateForJudge(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}\n\n[… contenu tronqué pour le juge …]`;
+export function buildJudgeUserContent(params: {
+  userMessage: string;
+  expertMemos: { employeeName: string; content: string }[];
+  managerResponse: string;
+}): string {
+  const memosText = params.expertMemos
+    .map((m) => `### ${m.employeeName}\n${m.content}`)
+    .join("\n\n");
+
+  return `<requete_utilisateur>
+${params.userMessage}
+</requete_utilisateur>
+
+<memos_experts>
+${memosText}
+</memos_experts>
+
+<reponse_du_manager>
+${params.managerResponse}
+</reponse_du_manager>`;
 }
 
 async function callJudge(
@@ -156,6 +196,7 @@ async function callJudge(
   const body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
     model,
     temperature: 0,
+    max_tokens: 1024,
     messages: [
       { role: "system", content: system },
       { role: "user", content: userContent },
@@ -181,20 +222,14 @@ export async function runJudge(params: {
     throw new DOMException("Aborted", "AbortError");
   }
 
-  const memosText = params.expertMemos
-    .map((m) => `### ${m.employeeName}\n${m.content}`)
-    .join("\n\n");
+  if (!params.managerResponse.trim()) {
+    throw new Error(
+      "Synthèse vide : impossible de juger (vérifiez la fenêtre de contexte du modèle de synthèse)."
+    );
+  }
 
-  const userContent = truncateForJudge(
-    `[Requête Utilisateur]
-${params.userMessage}
-
-[Mémos des Experts]
-${memosText}
-
-[Réponse du Manager]
-${params.managerResponse}`,
-    12_000
+  const userContent = capJudgeInputIfConfigured(
+    buildJudgeUserContent(params)
   );
 
   const client = new OpenAI({
@@ -203,23 +238,9 @@ ${params.managerResponse}`,
   });
 
   const { signal } = params;
-  const attempts: {
-    system: string;
-    user: string;
-    jsonObject: boolean;
-  }[] = [
-    { system: JUDGE_SYSTEM, user: userContent, jsonObject: true },
-    { system: JUDGE_SYSTEM, user: userContent, jsonObject: false },
-    {
-      system: JUDGE_SYSTEM_COMPACT,
-      user: `Évalue en JSON uniquement (0 ou 1).\n\nRequête (extrait): ${params.userMessage.slice(0, 800)}\n\nRéponse manager (extrait): ${params.managerResponse.slice(0, 1500)}`,
-      jsonObject: true,
-    },
-    {
-      system: JUDGE_SYSTEM_COMPACT,
-      user: `Évalue en JSON uniquement (0 ou 1).\n\nRequête (extrait): ${params.userMessage.slice(0, 800)}\n\nRéponse manager (extrait): ${params.managerResponse.slice(0, 1500)}`,
-      jsonObject: false,
-    },
+  const attempts: { jsonObject: boolean }[] = [
+    { jsonObject: true },
+    { jsonObject: false },
   ];
 
   let lastRaw = "";
@@ -228,8 +249,8 @@ ${params.managerResponse}`,
       lastRaw = await callJudge(
         client,
         params.model,
-        attempt.system,
-        attempt.user,
+        JUDGE_SYSTEM,
+        userContent,
         signal,
         attempt.jsonObject
       );

@@ -14,13 +14,13 @@ export function buildProposalPrompt(userPrompt: string): string {
       ? `${userPrompt.slice(0, EVAL_PROMPT_MAX)}\n[… brief tronqué …]`
       : userPrompt;
 
-  return `Tu es le Manager. Compose exactement 3 experts pour ce brief CEO.
+  return `Tu es un assistant de composition d'équipe. Compose exactement 3 contributeurs experts pour la demande utilisateur ci-dessous.
 
-Brief :
+Demande :
 "${brief}"
 
 Réponds UNIQUEMENT avec cet objet JSON (pas de markdown, pas de texte avant/après) :
-{"experts":[{"name":"Titre court","icon":"🎯","systemPrompt":"Tu es expert en X. Réponds au CEO en Markdown (titres, listes). Pas d'art ASCII.","justification":"Une phrase."},{"name":"...","icon":"📊","systemPrompt":"...","justification":"..."},{"name":"...","icon":"⚖️","systemPrompt":"...","justification":"..."}]}`;
+{"experts":[{"name":"Titre court","icon":"🎯","systemPrompt":"Tu es expert en X. Réponds à l'utilisateur en Markdown (titres, listes). Pas d'art ASCII.","justification":"Une phrase."},{"name":"...","icon":"📊","systemPrompt":"...","justification":"..."},{"name":"...","icon":"⚖️","systemPrompt":"...","justification":"..."}]}`;
 }
 
 /** Équipe minimale si le modèle local ne renvoie pas de JSON valide (eval uniquement). */
@@ -31,7 +31,7 @@ export function buildEvalFallbackTeam(userPrompt: string): ProposedEmployee[] {
     {
       name: "Analyste métier",
       icon: "📊",
-      systemPrompt: `Tu es analyste senior (${domain}). Analyse le brief CEO et recommande des actions concrètes. Réponds en Markdown structuré.`,
+      systemPrompt: `Tu es analyste senior (${domain}). Analyse la demande utilisateur et recommande des actions concrètes. Réponds en Markdown structuré.`,
       justification: "Couverture métier du domaine.",
       accepted: true,
       weight: 2,
@@ -47,7 +47,7 @@ export function buildEvalFallbackTeam(userPrompt: string): ProposedEmployee[] {
     {
       name: "Stratège synthèse",
       icon: "🎯",
-      systemPrompt: `Tu es stratège. Propose une recommandation décisionnelle pour le CEO à partir du domaine ${domain}. Réponds en Markdown, sois actionnable.`,
+      systemPrompt: `Tu es stratège. Propose une recommandation actionnable pour l'utilisateur à partir du contexte ${domain}. Réponds en Markdown structuré.`,
       justification: "Recommandation finale actionnable.",
       accepted: true,
       weight: 2,
@@ -203,7 +203,7 @@ export async function proposeTeam(params: {
   }
   const conn = connections.find((c) => c.id === manager.connectionId);
   if (!conn) {
-    throw new Error("Connexion du Manager introuvable.");
+    throw new Error("Connexion de l'assistant de synthèse introuvable.");
   }
 
   const client = new OpenAI({
@@ -272,7 +272,7 @@ export async function proposeTeam(params: {
   const excerpt = stripThinkingTags(lastRaw).slice(0, 280).replace(/\s+/g, " ");
   throw new Error(
     excerpt
-      ? `Le Manager n'a pas pu proposer d'équipe (réponse vide ou JSON invalide). Extrait : « ${excerpt}… »`
-      : "Le Manager n'a pas pu proposer d'équipe (réponse vide). Vérifiez que le modèle est chargé dans LM Studio."
+      ? `L'assistant n'a pas pu proposer d'équipe (réponse vide ou JSON invalide). Extrait : « ${excerpt}… »`
+      : "L'assistant n'a pas pu proposer d'équipe (réponse vide). Vérifiez que le modèle est chargé dans LM Studio."
   );
 }

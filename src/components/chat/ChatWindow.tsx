@@ -183,7 +183,11 @@ export function ChatWindow({
           memos = m;
           setReceivedMemos(m);
           setLoadingPhase("manager");
-          setStatusText(fastMode ? "Le Manager répond..." : "Le Manager rédige sa synthèse...");
+          setStatusText(
+            fastMode
+              ? "L'assistant de synthèse répond…"
+              : "L'assistant de synthèse rédige la synthèse…"
+          );
         },
         onContent: (chunk) => {
           fullContent += chunk;
@@ -226,10 +230,10 @@ export function ChatWindow({
       const { manager, connections } = loadBoardroomSettings();
 
       if (!isSettingsReady({ manager, connections })) {
-        return "Le Manager n'est pas configuré. Allez dans les paramètres pour sélectionner un modèle pour le Manager.";
+        return "L'assistant de synthèse n'est pas configuré. Allez dans les paramètres pour sélectionner un modèle.";
       }
 
-      setStatusText("Le Manager compose une équipe...");
+      setStatusText("L'assistant compose une équipe…");
       setLoadingPhase("employees");
 
       try {
@@ -289,7 +293,7 @@ export function ChatWindow({
 
       if (isFastMode) {
         setLoadingPhase("manager");
-        setStatusText("Le Manager répond en direct...");
+        setStatusText("L'assistant de synthèse répond en direct…");
 
         try {
           await executeChat(content, updatedMessages, undefined, true, signal);
@@ -563,7 +567,7 @@ export function ChatWindow({
                   Bienvenue dans le Boardroom
                 </h2>
                 <p className="mt-2 text-sm text-zinc-400">
-                  Posez une question. Le Manager constituera une équipe d&apos;experts adaptée.
+                  Posez une question. L&apos;assistant constituera une équipe de contributeurs adaptée.
                 </p>
               </div>
 
@@ -590,7 +594,7 @@ export function ChatWindow({
                     <div>
                       <p className="text-sm font-medium text-amber-200">Configuration requise</p>
                       <p className="mt-1 text-xs text-amber-200/70">
-                        Ajoutez une connexion API et sélectionnez un modèle pour le Manager avant de commencer.
+                        Ajoutez une connexion API et sélectionnez un modèle pour l&apos;assistant de synthèse avant de commencer.
                       </p>
                     </div>
                   </div>
@@ -655,7 +659,7 @@ export function ChatWindow({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 flex items-center gap-2">
-                    <span className="text-sm font-semibold text-zinc-200">Manager</span>
+                    <span className="text-sm font-semibold text-zinc-200">Synthèse</span>
                   </div>
 
                   {streamingContent ? (
@@ -777,7 +781,7 @@ function StatusBar({
         <div className="flex items-center gap-2">
           <StepDot active={phase === "manager"} done={false} />
           <span className={phase === "manager" ? "text-zinc-200 font-medium" : "text-zinc-400"}>
-            Synthèse Manager
+            Synthèse
           </span>
         </div>
       </div>

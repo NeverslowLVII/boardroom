@@ -7,7 +7,7 @@ import {
 } from "@/lib/synthesis";
 import { queryEmployee } from "@/lib/employee-query";
 import { throwIfAborted } from "@/lib/eval/abort";
-import { proposeTeam } from "@/lib/team-proposal";
+import { buildProposalPrompt, proposeTeam } from "@/lib/team-proposal";
 import type {
   ApiConnection,
   EmployeeConfig,
@@ -65,7 +65,10 @@ export interface EvalRunCaseResult {
   employees: EmployeeConfig[];
   memos: EmployeeResult[];
   managerResponse: string;
+  teamProposalPrompt: string;
   synthesisPrompt: string;
+  managerSystemPrompt: string;
+  expertPrompts: { name: string; systemPrompt: string }[];
   tokenUsage?: ReturnType<typeof sumTokenUsage>;
 }
 
@@ -85,7 +88,7 @@ export async function runBoardroomEvalCase(
 
   const managerConn = resolveConnection(manager.connectionId, connections);
   if (!managerConn) {
-    throw new Error("Connexion du Manager introuvable.");
+    throw new Error("Connexion de l'assistant de synthèse introuvable.");
   }
 
   throwIfAborted(signal);
@@ -149,7 +152,13 @@ export async function runBoardroomEvalCase(
     employees,
     memos,
     managerResponse,
+    teamProposalPrompt: buildProposalPrompt(userMessage),
     synthesisPrompt: managerPrompt,
+    managerSystemPrompt: manager.systemPrompt,
+    expertPrompts: employees.map((e) => ({
+      name: e.name,
+      systemPrompt: e.rolePrompt,
+    })),
     tokenUsage: totalTokenUsage,
   };
 }

@@ -127,7 +127,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "connections", label: "Connexions", icon: <Cable className="h-4 w-4" /> },
-    { id: "manager", label: "Manager", icon: <UserCog className="h-4 w-4" /> },
+    { id: "manager", label: "Synthèse", icon: <UserCog className="h-4 w-4" /> },
   ];
 
   return (
@@ -252,7 +252,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-400">
-                  System Prompt du Manager
+                  System prompt de l&apos;assistant de synthèse
                 </label>
                 <textarea
                   value={manager.systemPrompt}

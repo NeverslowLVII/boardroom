@@ -28,29 +28,40 @@ export async function loadStressMatrix(): Promise<StressMatrixFile> {
 }
 
 /**
- * Message CEO déterministe (pas de LLM générateur) pour reproduire les mêmes scénarios à chaque run.
+ * Message utilisateur déterministe (pas de LLM générateur) pour reproduire les mêmes scénarios à chaque run.
  */
 export function buildDeterministicUserMessage(profile: StressProfileRow): string {
   return `[Scénario d'évaluation — profil ${profile.id}]
 Domaine : ${profile.domain}
-Tension experts : ${profile.expert_tension}
-Contrainte CEO attendue : ${profile.user_constraint}
+Tension entre contributeurs : ${profile.expert_tension}
+Contrainte utilisateur attendue : ${profile.user_constraint}
 Ambiguïté : ${profile.ambiguity}
 
-Brief pour le comité d'experts et le Manager :
+Brief pour les contributeurs et l'assistant de synthèse :
 ${profile.instructions}
 
 ---
-En tant que CEO, je demande une synthèse actionnable pour décider, en respectant strictement toute contrainte de format ou de fond mentionnée ci-dessus.`;
+En tant qu'utilisateur, je demande une synthèse actionnable, en respectant strictement toute contrainte de format ou de fond mentionnée ci-dessus.`;
 }
 
+function shuffleProfiles<T>(items: T[]): T[] {
+  const pool = [...items];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool;
+}
+
+/** Profils tirés au hasard (évite de rejouer toujours le 1er du fichier, ex. pharma_reg_vs_commercial). */
 export function pickProfilesForRun(
   profiles: StressProfileRow[],
   count: number
 ): StressProfileRow[] {
+  const pool = shuffleProfiles(profiles);
   const out: StressProfileRow[] = [];
   for (let i = 0; i < count; i++) {
-    out.push(profiles[i % profiles.length]);
+    out.push(pool[i % pool.length]);
   }
   return out;
 }

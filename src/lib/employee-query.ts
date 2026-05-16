@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { formatApiError } from "@/lib/utils";
 import {
   extractFinalAssistantContent,
+  LLM_MAX_OUTPUT_TOKENS,
   resolveConnection,
   stripThinkingTags,
   extractUsage,
@@ -51,6 +52,7 @@ export async function queryEmployee(
     const response = await client.chat.completions.create(
       {
         model: employee.modelId,
+        max_tokens: LLM_MAX_OUTPUT_TOKENS,
         messages: [
           { role: "system" as const, content: employee.rolePrompt },
           ...messages.map((m) => ({

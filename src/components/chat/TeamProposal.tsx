@@ -115,7 +115,7 @@ export function TeamProposal({
           </div>
           <div>
             <h3 className="text-sm font-semibold text-zinc-100">
-              Équipe proposée par le Manager
+              Équipe proposée par l&apos;assistant
             </h3>
             <p className="text-xs text-zinc-400">
               Validez, modifiez ou retirez des experts avant de lancer l&apos;analyse.

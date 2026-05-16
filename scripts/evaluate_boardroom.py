@@ -6,8 +6,9 @@ Prérequis : .env avec NVIDIA_NIM_API_KEY (+ NVIDIA_NIM_MODEL optionnel).
   npm run dev   # dans un autre terminal
   npm run eval  # ou: python scripts/evaluate_boardroom.py
 
-Par défaut : matrice de stress → pipeline réel (Manager crée l'équipe,
-experts répondent, Manager synthétise) → juge. Aucun JSON de config requis.
+Par défaut : dataset WildChat (scripts/data/real_queries.jsonl) → mémos experts
+Kimi → synthèse manager via /api/eval/synthesize → juge.
+Avec --no-dataset : matrice de stress → pipeline réel (run-case) → juge.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import re
 import sys
 import time
@@ -38,47 +40,62 @@ DEFAULT_BOARDROOM_URL = "http://localhost:3000"
 OUTPUT_DIR = SCRIPTS_DIR / "eval_runs"
 EVAL_CONNECTION_ID = "eval-nim-auto"
 DEFAULT_STRESS_MATRIX_PATH = SCRIPTS_DIR / "stress_matrix.json"
-DEFAULT_MANAGER_SYSTEM_PROMPT = """Tu es l'Assistant Manager du CEO. Tu reçois les analyses de plusieurs employés experts et tu dois :
+DEFAULT_DATASET_PATH = SCRIPTS_DIR / "data" / "real_queries.jsonl"
+DEFAULT_MANAGER_SYSTEM_PROMPT = """Tu es un assistant de synthèse. Tu reçois les analyses de plusieurs contributeurs experts et tu dois :
 1. Synthétiser leurs réponses en une réponse claire et structurée.
-2. Identifier les consensus et les divergences entre les employés.
-3. Signaler si un employé n'a pas pu répondre (erreur technique).
-4. Présenter une recommandation finale au CEO.
-Sois concis, professionnel et orienté décision.
+2. Identifier les consensus et les divergences entre les contributeurs.
+3. Signaler si un contributeur n'a pas pu répondre (erreur technique).
+4. Présenter une synthèse finale à l'utilisateur.
+Sois concis, précis et fidèle aux sources.
 
-PONDÉRATION DES EMPLOYÉS :
+PONDÉRATION DES CONTRIBUTIONS :
 - Chaque mémo indique une pondération (1/3, 2/3 ou 3/3).
-- 3/3 (Critique) : avis prioritaire. En cas de conflit technique ou de divergence, privilégie cet employé.
-- 2/3 (Important) : avis standard, à considérer normalement.
-- 1/3 (Consultatif) : avis secondaire, à intégrer sans le mettre en avant.
+- 3/3 (Prioritaire) : avis à traiter en premier. En cas de conflit ou de divergence, privilégie ce contributeur.
+- 2/3 (Standard) : avis à intégrer normalement.
+- 1/3 (Complémentaire) : avis secondaire, à intégrer sans le mettre en avant.
 
 FORMATAGE OBLIGATOIRE :
 - Utilise exclusivement du Markdown standard pour structurer tes réponses.
 - Pour les tableaux, utilise UNIQUEMENT la syntaxe Markdown : | Col1 | Col2 | avec |---|---| pour les séparateurs.
 - N'utilise JAMAIS de l'art ASCII (┌─┐│└─┘╔═╗║╚═╝ etc.) pour dessiner des tableaux ou des cadres.
-- Utilise des listes, titres (##, ###) et **gras** pour hiérarchiser l'information."""
+- Utilise des listes, titres (##, ###) et **gras** pour hiérarchiser l'information.
 
-JUDGE_SYSTEM_PROMPT = """Tu es un évaluateur d'algorithme impitoyable. Analyse la [Réponse du Manager] par rapport à la [Requête Utilisateur] et aux [Mémos des Experts].
-Évalue les critères suivants avec 1 (Vrai/Succès) ou 0 (Faux/Échec) :
-1. omission_critique : Le manager a-t-il ignoré une recommandation majeure présente dans les mémos ?
-2. hallucination_produit : Le manager a-t-il inventé ou modifié la posologie ou l'usage d'un produit ?
-3. respect_contrainte : Le manager a-t-il respecté la contrainte explicite de l'utilisateur ?
+RÈGLES STRICTES DE SYNTHÈSE :
+1. RESPECT LITTÉRAL DU FORMAT : Applique les contraintes de format de l'utilisateur (longueur, présence ou absence de tableaux, mots interdits, structure imposée) de manière absolue et littérale. Ne justifie JAMAIS une entorse à une règle de format sous prétexte de clarté.
+2. FIDÉLITÉ DES SOLUTIONS CONCRÈTES : Lorsqu'un contributeur formule une solution exacte et concrète (étape précise, formulation textuelle à conserver, condition explicite ou choix nommé), tu dois la restituer fidèlement dans ta synthèse, sans la résumer à l'excès ni la tronquer au point d'en perdre l'essentiel.
+3. VALORISATION DES COMPROMIS : La pondération indique l'autorité relative, mais tu ne dois jamais effacer une solution de compromis pertinente d'un contributeur moins pondéré si elle permet de respecter les exigences du contributeur prioritaire.
+4. INTERDICTION DE PARALYSIE : Si une information est ambiguë ou incomplète, tu dois IMPÉRATIVEMENT fournir la meilleure synthèse actionnable possible avec les données présentes, plutôt que de refuser de répondre.
+5. INTERDICTION DE DIFFÉRER : Livre la synthèse complète dans ce message. Interdit de remplacer la réponse par une promesse d'action future (« je vais me pencher sur », « je reviens vers vous », « n'hésitez pas à me recontacter », etc.). Tu n'es pas un interlocuteur de service : tu restitues ici le contenu utile issu des mémos."""
+
+JUDGE_SYSTEM_PROMPT = """Tu es un évaluateur rigoureux.
+
+Le message utilisateur contient trois blocs XML : <requete_utilisateur>, <memos_experts> et <reponse_du_manager>.
+
+Évalue UNIQUEMENT le contenu à l'intérieur de <reponse_du_manager>, en le comparant à <requete_utilisateur> et à <memos_experts>. Ignore tout texte hors de ces balises.
+
+Si <reponse_du_manager> est vide ou quasi vide, considère que la synthèse a échoué (limite de contexte ou erreur API) — ne pénalise pas une « omission » sur du contenu qui n'a jamais été généré.
+
+Critères (1 = succès, 0 = échec) :
+1. omission_critique : la réponse a-t-elle ignoré une recommandation majeure présente dans les mémos ?
+2. hallucination_produit : la réponse a-t-elle inventé ou altéré des faits, formulations ou éléments concrets explicitement présents dans les mémos ?
+3. respect_contrainte : la réponse a-t-elle respecté la contrainte explicite de l'utilisateur dans <requete_utilisateur> ?
 
 Tu dois uniquement répondre avec un objet JSON valide et rien d'autre :
 {"omission_critique": 0, "hallucination_produit": 0, "respect_contrainte": 1, "justification_courte": "..."}"""
 
-GENERATOR_SYSTEM_PROMPT = """Tu es un générateur de données de test synthétiques pour "Boardroom", une app où un Manager IA synthétise les mémos de plusieurs experts pour un CEO.
+GENERATOR_SYSTEM_PROMPT = """Tu es un générateur de données de test synthétiques pour "Boardroom", une app où un assistant de synthèse agrège les mémos de plusieurs contributeurs pour l'utilisateur.
 
-Pour chaque cas, invente un scénario réaliste (stratégie business, pharma/réglementaire, ops, finance, produit, etc.).
+Pour chaque cas, invente un scénario réaliste et varié (sans présumer d'un domaine unique).
 
 Chaque cas doit contenir :
-- "user_query" : la demande du CEO avec UNE contrainte explicite (format, budget, longueur, interdiction, etc.)
-- "expert_memos" : 2 à 4 mémos, chacun avec "employee" (ex: "Expert Réglementaire (3/3)") et "content" (recommandations concrètes ; au moins un point critique 3/3)
-- "manager_response" : la synthèse finale du Manager en Markdown
+- "user_query" : la demande de l'utilisateur avec UNE contrainte explicite (format, longueur, interdiction, périmètre, etc.)
+- "expert_memos" : 2 à 4 mémos, chacun avec "employee" (ex: "Contributeur A (3/3)") et "content" (recommandations concrètes ; au moins un point prioritaire 3/3)
+- "manager_response" : la synthèse finale de l'assistant en Markdown
 - "defect_profile" : UN parmi "clean", "omission_critique", "hallucination_produit", "respect_contrainte"
   - "clean" : réponse exemplaire qui respecte mémos et contrainte
-  - "omission_critique" : ignore délibérément une recommandation majeure d'un expert 3/3
-  - "hallucination_produit" : invente ou altère posologie, dosage, indication ou usage produit
-  - "respect_contrainte" : viole clairement la contrainte explicite du CEO
+  - "omission_critique" : ignore délibérément une recommandation majeure d'un contributeur 3/3
+  - "hallucination_produit" : invente ou altère des faits ou formulations explicitement présents dans les mémos
+  - "respect_contrainte" : viole clairement la contrainte explicite de l'utilisateur
 
 Varie les defect_profile sur l'ensemble des cas. Les défauts doivent être réalistes, pas caricaturaux.
 
@@ -87,19 +104,19 @@ Réponds UNIQUEMENT avec un JSON valide de la forme :
 
 GENERATOR_STRESS_RULES = """
 RÈGLES DE STRESS (obligatoires) :
-- Interdit : requêtes CEO vagues ou « faciles » sans contrainte mesurable.
+- Interdit : requêtes utilisateur vagues ou « faciles » sans contrainte mesurable.
 - Chaque user_query DOIT contenir au moins une contrainte explicite (format, longueur, budget, mot interdit, délai, périmètre).
-- Le user_query doit décrire un contexte où le Manager devra composer des experts en tension (sujet technique, juridique, contradictoire).
-- Inclure des détails factuels (chiffres, délais, produits) pour forcer une synthèse exigeante.
+- Le user_query doit décrire un contexte où l'assistant devra composer des contributeurs en tension (sujets contradictoires ou ambigus).
+- Inclure des détails factuels concrets pour forcer une synthèse exigeante.
 - Chaque cas DOIT inclure "stress_profile_id" reprenant exactement l'id assigné dans le brief.
-- NE GÉNÈRE PAS d'expert_memos : le Manager Boardroom créera l'équipe et les experts répondront ensuite."""
+- NE GÉNÈRE PAS d'expert_memos : Boardroom créera l'équipe et les contributeurs répondront ensuite."""
 
-GENERATOR_LIVE_PROMPT = f"""Tu es un générateur de requêtes CEO pour tester "Boardroom" (Manager + équipe d'experts IA).
+GENERATOR_LIVE_PROMPT = f"""Tu es un générateur de requêtes utilisateur pour tester "Boardroom" (assistant de synthèse + équipe de contributeurs IA).
 {GENERATOR_STRESS_RULES}
 
 Chaque cas contient UNIQUEMENT :
 - "stress_profile_id" : id du profil assigné
-- "user_query" : la demande complète du CEO (contrainte explicite obligatoire)
+- "user_query" : la demande complète de l'utilisateur (contrainte explicite obligatoire)
 
 Réponds UNIQUEMENT avec :
 {{"cases": [{{"stress_profile_id": "...", "user_query": "..."}}]}}"""
@@ -108,6 +125,22 @@ GENERATOR_STRESS_SYNTHETIC_EXTRA = """
 - "manager_response" : synthèse Markdown (pour mode offline)
 - "defect_profile" : clean | omission_critique | hallucination_produit | respect_contrainte
 Le defect_profile doit être cohérent avec le profil de stress quand pertinent."""
+
+GENERATOR_DATASET_PROMPT = '''Voici une véritable requête formulée par un utilisateur :
+"{user_query}"
+
+Ton rôle est de simuler les réponses de 3 experts de son entreprise face à ce problème/cette question. 
+Génère 3 mémos d'experts (un avec un poids de 3/3, deux avec 2/3). 
+Pour tester la capacité de synthèse de notre application, intègre volontairement un désaccord stratégique, une nuance forte, ou une interprétation différente de la consigne entre les experts.
+
+Tu dois répondre UNIQUEMENT avec un objet JSON valide suivant ce schéma :
+{{
+  "expert_memos": [
+    {{ "employee": "Titre Expert 1 (3/3)", "content": "..." }},
+    {{ "employee": "Titre Expert 2 (2/3)", "content": "..." }},
+    {{ "employee": "Titre Expert 3 (2/3)", "content": "..." }}
+  ]
+}}'''
 
 FIXTURE_CASES: list[dict[str, Any]] = [
     {
@@ -244,6 +277,183 @@ def parse_employee_label(label: str) -> tuple[str, int]:
     return label.strip(), 2
 
 
+def load_dataset_queries(path: Path) -> list[str]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Dataset introuvable : {path}")
+    queries: list[str] = []
+    for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            value = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path.name} ligne {line_no} : JSON invalide") from exc
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{path.name} ligne {line_no} : attendu une chaîne non vide")
+        queries.append(value.strip())
+    if not queries:
+        raise ValueError(f"Dataset vide : {path}")
+    return queries
+
+
+def sample_dataset_cases(path: Path, count: int) -> list[dict[str, Any]]:
+    pool = load_dataset_queries(path)
+    n = min(count, len(pool))
+    selected = random.sample(pool, n)
+    cases: list[dict[str, Any]] = []
+    for i, query in enumerate(selected, start=1):
+        cases.append(
+            {
+                "user_query": query,
+                "expert_memos": [],
+                "manager_response": "",
+                "defect_profile": "unknown",
+                "dataset_index": i,
+                "dataset_source": path.name,
+            }
+        )
+    print(f"  Dataset : {path.name} ({len(pool)} requêtes, {n} tirées au hasard)")
+    return cases
+
+
+def build_generator_dataset_prompt(user_query: str) -> str:
+    return GENERATOR_DATASET_PROMPT.format(user_query=user_query)
+
+
+def generate_dataset_expert_memos(client: OpenAI, user_query: str) -> list[dict[str, str]]:
+    system = build_generator_dataset_prompt(user_query)
+    raw = chat_completion(
+        client,
+        system=system,
+        user="Génère les expert_memos au format JSON demandé.",
+        temperature=0.85,
+        json_mode=True,
+    )
+    parsed = extract_json_object(raw)
+    memos_raw = parsed.get("expert_memos")
+    if not isinstance(memos_raw, list) or len(memos_raw) < 3:
+        raise ValueError("Le générateur dataset n'a pas renvoyé 3 expert_memos")
+    memos: list[dict[str, str]] = []
+    for j, memo in enumerate(memos_raw[:3]):
+        if not isinstance(memo, dict) or not memo.get("content"):
+            raise ValueError(f"Mémo expert {j + 1} invalide")
+        memos.append(
+            {
+                "employee": str(memo.get("employee", f"Expert {j + 1} (2/3)")).strip(),
+                "content": str(memo["content"]).strip(),
+            }
+        )
+    return memos
+
+
+def generate_dataset_cases(client: OpenAI, cases: list[dict[str, Any]]) -> None:
+    total = len(cases)
+    print(f"\n[Génération dataset] Mémos experts Kimi pour {total} requêtes WildChat…")
+    for index, case in enumerate(cases, start=1):
+        preview = case["user_query"][:72].replace("\n", " ")
+        print(f"  Cas {index}/{total} — {preview}…")
+        case["expert_memos"] = generate_dataset_expert_memos(client, case["user_query"])
+        case["manager_source"] = "dataset_kimi_memos"
+        if index < total:
+            api_sleep()
+
+
+def expert_memos_to_boardroom_payload(
+    expert_memos: list[dict[str, str]],
+    config: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    defaults = config["employeeDefaults"]
+    employees: list[dict[str, Any]] = []
+    api_memos: list[dict[str, Any]] = []
+    icons = ["🎯", "⚖️", "📊"]
+    for i, memo in enumerate(expert_memos):
+        emp_id = f"dataset-expert-{i + 1}"
+        name, weight = parse_employee_label(memo["employee"])
+        weight = max(1, min(3, weight))
+        icon = icons[i % len(icons)]
+        employees.append(
+            {
+                "id": emp_id,
+                "name": name,
+                "icon": icon,
+                "connectionId": defaults["connectionId"],
+                "modelId": defaults["modelId"],
+                "rolePrompt": memo["content"][:500],
+                "isActive": True,
+                "weight": weight,
+            }
+        )
+        api_memos.append(
+            {
+                "employeeId": emp_id,
+                "employeeName": name,
+                "employeeIcon": icon,
+                "content": memo["content"],
+                "error": None,
+                "durationMs": 0,
+            }
+        )
+    return employees, api_memos
+
+
+def run_synthesize_case(
+    case: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    base_url: str,
+    eval_secret: str | None,
+) -> None:
+    url = f"{base_url.rstrip('/')}/api/eval/synthesize"
+    employees, api_memos = expert_memos_to_boardroom_payload(case["expert_memos"], config)
+    body = post_json(
+        url,
+        {
+            "userMessage": case["user_query"],
+            "memos": api_memos,
+            "employees": employees,
+            "manager": config["manager"],
+            "connections": config["connections"],
+        },
+        eval_secret=eval_secret,
+        timeout=600,
+    )
+    if body.get("error") and not body.get("managerResponse"):
+        raise RuntimeError(body["error"])
+    case["manager_response"] = body.get("managerResponse", "")
+    case["manager_source"] = "boardroom_synthesize"
+    if not case["manager_response"]:
+        q_len = len(case.get("user_query", ""))
+        raise RuntimeError(
+            f"Synthèse Boardroom : managerResponse vide "
+            f"(requête {q_len} car. — modèle synthèse : fenêtre de contexte ou API)"
+        )
+
+
+def hydrate_dataset_synthesize(
+    cases: list[dict[str, Any]],
+    config: dict[str, Any],
+    *,
+    base_url: str,
+    eval_secret: str | None,
+) -> None:
+    total = len(cases)
+    print(
+        f"\n[Synthèse Boardroom] {base_url}/api/eval/synthesize\n"
+        "  Assistant de synthèse réel (prompt Paramètres / .env) sur requête WildChat + mémos"
+    )
+    for index, case in enumerate(cases, start=1):
+        if case.get("manager_response"):
+            continue
+        print(f"  Cas {index}/{total}…")
+        run_synthesize_case(
+            case, config, base_url=base_url, eval_secret=eval_secret
+        )
+        print(f"    Synthèse OK ({len(case['manager_response'])} car.)")
+        if index < total:
+            api_sleep()
+
+
 def load_stress_matrix(path: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         raise FileNotFoundError(f"Matrice de stress introuvable : {path}")
@@ -271,7 +481,7 @@ def build_stress_brief(assignments: list[dict[str, Any]]) -> str:
             f"--- Cas {i} | stress_profile_id=\"{profile['id']}\" ---\n"
             f"Domaine: {profile.get('domain', '?')} | "
             f"Tension experts: {profile.get('expert_tension', '?')} | "
-            f"Contrainte CEO: {profile.get('user_constraint', '?')} | "
+            f"Contrainte utilisateur: {profile.get('user_constraint', '?')} | "
             f"Ambiguïté: {profile.get('ambiguity', '?')}\n"
             f"Instructions: {profile['instructions']}\n"
         )
@@ -486,11 +696,18 @@ def resolve_boardroom_config(config_path: Path | None) -> tuple[dict[str, Any], 
     return build_config_from_env(), "auto (.env)"
 
 
-def resolve_case_count(requested: int | None, stress_matrix_path: Path) -> int:
+def resolve_case_count(
+    requested: int | None,
+    *,
+    use_dataset: bool,
+    stress_matrix_path: Path,
+) -> int:
     if requested is not None:
         return requested
     if os.environ.get("EVAL_CASE_COUNT"):
         return int(os.environ["EVAL_CASE_COUNT"])
+    if use_dataset:
+        return 10
     try:
         return len(load_stress_matrix(stress_matrix_path))
     except (FileNotFoundError, ValueError):
@@ -571,7 +788,12 @@ def run_boardroom_pipeline(
     case["manager_response"] = body.get("managerResponse", "")
     case["manager_source"] = "boardroom_pipeline"
     if not case["manager_response"]:
-        raise RuntimeError("Pipeline Boardroom : managerResponse vide")
+        q_len = len(case.get("user_query", ""))
+        n_memos = len(case.get("expert_memos") or [])
+        raise RuntimeError(
+            f"Pipeline Boardroom : managerResponse vide "
+            f"(requête {q_len} car., {n_memos} mémo(s) — vérifiez le modèle synthèse 32k+)"
+        )
     if len(case["expert_memos"]) < 1:
         raise RuntimeError("Pipeline Boardroom : aucun mémo expert")
 
@@ -586,9 +808,9 @@ def hydrate_live_boardroom_pipeline(
     total = len(cases)
     print(
         f"\n[Pipeline Boardroom] {base_url}/api/eval/run-case\n"
-        "  1. Manager compose l'équipe\n"
-        "  2. Experts répondent\n"
-        "  3. Manager synthétise"
+        "  1. Assistant compose l'équipe\n"
+        "  2. Contributeurs répondent\n"
+        "  3. Assistant synthétise"
     )
     for index, case in enumerate(cases, start=1):
         if case.get("manager_response") and case.get("expert_memos"):
@@ -628,10 +850,34 @@ def build_judge_user_message(case: dict[str, Any]) -> str:
         for m in case["expert_memos"]
     )
     return (
-        f"[Requête Utilisateur]\n{case['user_query']}\n\n"
-        f"[Mémos des Experts]\n{memos_text}\n\n"
-        f"[Réponse du Manager]\n{case['manager_response']}"
+        f"<requete_utilisateur>\n{case['user_query']}\n</requete_utilisateur>\n\n"
+        f"<memos_experts>\n{memos_text}\n</memos_experts>\n\n"
+        f"<reponse_du_manager>\n{case['manager_response']}\n</reponse_du_manager>"
     )
+
+
+def warn_empty_synthesis(case: dict[str, Any], case_index: int) -> bool:
+    """True si la synthèse est vide (crash contexte / API)."""
+    resp = str(case.get("manager_response", "")).strip()
+    if resp:
+        return False
+    query_len = len(str(case.get("user_query", "")))
+    memos = case.get("expert_memos") or []
+    memos_len = sum(len(str(m.get("content", ""))) for m in memos)
+    print(
+        f"\n⚠ AVERTISSEMENT cas {case_index} : manager_response VIDE",
+        file=sys.stderr,
+    )
+    print(
+        f"  → Requête : {query_len} car. | Mémos experts : {len(memos)} ({memos_len} car. total)",
+        file=sys.stderr,
+    )
+    print(
+        "  → Cause probable : fenêtre de contexte du modèle de synthèse dépassée "
+        "ou erreur API silencieuse. Utilisez un modèle 32k+ pour le rôle synthèse.",
+        file=sys.stderr,
+    )
+    return True
 
 
 def normalize_scores(parsed: dict[str, Any]) -> dict[str, int]:
@@ -695,13 +941,28 @@ def evaluate_all(
     for index, case in enumerate(cases, start=1):
         profile = case.get("defect_profile", "?")
         stress_id = case.get("stress_profile_id", "—")
+        dataset_ref = case.get("dataset_index", "—")
         source = case.get("manager_source", "synthetic")
         print(
             f"\n--- Cas {index}/{total} "
-            f"(manager: {source}, stress: {stress_id}, defect: {profile}) ---"
+            f"(manager: {source}, dataset: {dataset_ref}, stress: {stress_id}, defect: {profile}) ---"
         )
         preview = case["user_query"][:80].replace("\n", " ")
         print(f"Requête : {preview}...")
+
+        if warn_empty_synthesis(case, index):
+            results.append(
+                {
+                    "case_index": index,
+                    "defect_profile": profile,
+                    "manager_source": source,
+                    "scores": None,
+                    "error": "manager_response vide (contexte ou API)",
+                }
+            )
+            if index < total:
+                api_sleep()
+            continue
 
         try:
             parsed = call_judge(client, build_judge_user_message(case))
@@ -848,16 +1109,44 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_STRESS_MATRIX_PATH,
         help="Fichier JSON des profils de stress",
     )
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=DEFAULT_DATASET_PATH,
+        help="Fichier .jsonl de requêtes réelles WildChat (défaut: scripts/data/real_queries.jsonl)",
+    )
+    parser.add_argument(
+        "--no-dataset",
+        action="store_true",
+        help="Désactive le dataset WildChat et utilise la matrice de stress",
+    )
+    parser.add_argument(
+        "--live-manager",
+        action="store_true",
+        help="Synthèse via /api/eval/synthesize (implicite sauf --offline)",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     eval_secret = os.environ.get("BOARDROOM_EVAL_SECRET")
-    live_pipeline = not args.offline
-    use_stress = not args.no_stress
+    use_dataset = not args.no_dataset
+    use_stress = not args.no_stress and not use_dataset
+    live_pipeline = args.live_manager or not args.offline
 
-    if args.no_stress:
+    if use_dataset and args.offline:
+        print(
+            "Le mode dataset WildChat requiert le manager réel "
+            "(--live-manager ou sans --offline).",
+            file=sys.stderr,
+        )
+        return 1
+
+    if use_dataset:
+        live_pipeline = True
+
+    if args.no_stress and not use_dataset:
         print(
             "ATTENTION : --no-stress active le happy path (scénarios faciles).",
             file=sys.stderr,
@@ -873,11 +1162,19 @@ def main() -> int:
 
     nim_base = os.environ.get("NVIDIA_NIM_BASE_URL", NVIDIA_BASE_URL)
     client = OpenAI(api_key=api_key, base_url=nim_base)
-    case_count = resolve_case_count(args.count, args.stress_matrix)
+    case_count = resolve_case_count(
+        args.count, use_dataset=use_dataset, stress_matrix_path=args.stress_matrix
+    )
 
     print(f"Modèle NIM : {JUDGE_MODEL}")
-    print(f"Cas à exécuter : {case_count}" + (" (matrice de stress)" if use_stress else ""))
-    print(f"Mode : {'pipeline Boardroom réel' if live_pipeline else 'offline (fictif)'}")
+    if use_dataset:
+        print(f"Cas à exécuter : {case_count} (dataset WildChat : {args.dataset})")
+    else:
+        print(f"Cas à exécuter : {case_count}" + (" (matrice de stress)" if use_stress else ""))
+    if use_dataset:
+        print("Mode : dataset réel → mémos Kimi → /api/eval/synthesize → juge")
+    else:
+        print(f"Mode : {'pipeline Boardroom réel' if live_pipeline else 'offline (fictif)'}")
     print(f"Pause API : {API_SLEEP_SECONDS}s entre chaque appel")
 
     boardroom_config: dict[str, Any] | None = None
@@ -897,6 +1194,20 @@ def main() -> int:
     if args.input:
         cases = load_cases(args.input, live_manager=live_pipeline)
         print(f"Chargé {len(cases)} cas depuis {args.input}")
+    elif use_dataset:
+        try:
+            cases = sample_dataset_cases(args.dataset, case_count)
+        except (FileNotFoundError, ValueError) as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        try:
+            generate_dataset_cases(client, cases)
+        except (ValueError, RuntimeError) as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        api_sleep()
+        out = args.output or OUTPUT_DIR / f"{datetime.now():%Y%m%d_%H%M%S}_wildchat.json"
+        save_cases(cases, out, live_manager=True)
     elif args.fixtures:
         cases = [
             validate_case(
@@ -931,12 +1242,20 @@ def main() -> int:
         save_cases(cases, out, live_manager=live_pipeline)
 
     if live_pipeline and boardroom_config:
-        hydrate_live_boardroom_pipeline(
-            cases,
-            boardroom_config,
-            base_url=args.boardroom_url,
-            eval_secret=eval_secret,
-        )
+        if use_dataset:
+            hydrate_dataset_synthesize(
+                cases,
+                boardroom_config,
+                base_url=args.boardroom_url,
+                eval_secret=eval_secret,
+            )
+        else:
+            hydrate_live_boardroom_pipeline(
+                cases,
+                boardroom_config,
+                base_url=args.boardroom_url,
+                eval_secret=eval_secret,
+            )
         if not args.generate_only:
             api_sleep()
 
@@ -962,8 +1281,11 @@ def main() -> int:
         json.dumps(
             redact_for_report(
                 {
-                    "mode": "pipeline" if live_pipeline else "offline",
+                    "mode": "dataset_wildchat"
+                    if use_dataset
+                    else ("pipeline" if live_pipeline else "offline"),
                     "model": JUDGE_MODEL,
+                    "dataset": str(args.dataset) if use_dataset else None,
                     "stress_matrix": use_stress,
                     "boardroom_url": args.boardroom_url if live_pipeline else None,
                     "config_source": config_source if live_pipeline else None,
